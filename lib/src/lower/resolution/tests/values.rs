@@ -8,6 +8,7 @@ fn test_extern(id: DefId, name: &str) -> HirExtern {
         ret: Type::I64,
         variadic: false,
         is_unsafe: false,
+        link_name: None,
     }
 }
 

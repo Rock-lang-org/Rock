@@ -259,9 +259,26 @@ pub fn function_sig(stream: Input) -> IResult<FunctionSig> {
                 self_receiver,
                 is_unsafe: is_unsafe.is_some(),
                 exported: false,
+                link_name: None,
             },
         )
         .process(stream)
+}
+
+/// The signature after `extern`: an optional `"Symbol"` link name, for
+/// foreign functions whose name is not a Rock function name, then an
+/// ordinary function signature.
+pub fn extern_sig(stream: Input) -> IResult<FunctionSig> {
+    let (rest, link_name) = match stream.consume() {
+        Ok((rest, token)) => match token.token_type {
+            TokenType::String(symbol) => (rest, Some(symbol)),
+            _ => (stream, None),
+        },
+        Err(_) => (stream, None),
+    };
+    let (rest, mut sig) = function_sig(rest)?;
+    sig.link_name = link_name;
+    Ok((rest, sig))
 }
 
 fn self_receiver_mode(stream: Input) -> IResult<SelfReceiverMode> {

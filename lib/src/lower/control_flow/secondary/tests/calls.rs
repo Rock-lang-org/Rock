@@ -192,6 +192,7 @@ fn direct_extern_call_records_call_target() {
         ret: Type::I32,
         variadic: false,
         is_unsafe: false,
+        link_name: None,
     });
     lowerer
         .resolver

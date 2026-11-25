@@ -37,6 +37,7 @@ fn ast_walk_visits_associated_types_and_signatures_in_traits() {
                 self_receiver: None,
                 is_unsafe: false,
                 exported: false,
+                link_name: None,
             },
         )]),
         exported: false,

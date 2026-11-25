@@ -25,6 +25,25 @@ Build this kind of example with `rock` only on the documented target,
 `x86_64-unknown-linux-gnu`. A different target may use a different library
 name, ABI, or linker setup.
 
+## Foreign names that are not Rock names
+
+Rock function names start with a lowercase letter, so a C symbol such as
+`GetTickCount` or `CreateThread` cannot be written as an ordinary `extern`
+name. Put the exact symbol in quotes after `extern` and choose a Rock name for
+it. This complete program calls C's `abs` under the Rock name `c_abs`:
+
+```rock
+extern "abs" c_abs: I32 -> I32
+
+main = !->
+    result: I32 = c_abs (-7 as I32)
+    result.println!
+```
+
+The program prints `7`. Only the linker sees `abs`; Rock code always calls
+`c_abs`. The quoted symbol is used exactly as written, so it must match the
+library's exported name, including case.
+
 ## Pointer contracts
 
 Raw pointers do not prove validity, alignment, initialization, aliasing, or
@@ -143,10 +162,11 @@ invariant.
 The shipped FFI-backed std assumes POSIX APIs. Its operating-system details
 (errno access, `open` flags, socket address layout) live in a private backend
 selected with [`cfg` blocks](../programs/modules.md#target-specific-modules-with-cfg);
-Linux is the tested target, macOS has a backend that compiles but is not yet
-qualified on a native runner, and Windows has no std backend yet. Some raw
-`std::ffi::libc` bindings, such as `open` and `__errno_location`, exist only on
-the targets where their C signature is known. Put your own foreign declarations
+Linux is the tested target. macOS (POSIX) and Windows (C runtime, Winsock and
+Win32 threads) have backends that compile but are not yet qualified on native
+machines. Raw `std::ffi::libc` bindings whose C signature differs between
+targets, such as the POSIX socket and thread functions, `open`, `atol` and
+`__errno_location`, exist only on the targets where their signature is known. Put your own foreign declarations
 in `cfg`-selected modules the same way, and isolate them behind portable APIs. A
 program that needs nonblocking sockets or a C-layout aggregate must provide a
 separate boundary implementation and test each target explicitly.

@@ -1,0 +1,128 @@
+// POSIX operations shared by the Linux and macOS backends. OS-specific
+// constants and errno access come from the selected OS backend through
+// std::sys.
+
+> std::ffi::libc::read
+> std::ffi::libc::write
+> std::ffi::libc::close
+> std::ffi::libc::socket
+> std::ffi::libc::bind
+> std::ffi::libc::listen
+> std::ffi::libc::accept
+> std::ffi::libc::connect
+> std::ffi::libc::send
+> std::ffi::libc::shutdown
+> std::ffi::libc::getsockname
+> std::ffi::libc::pthread_create
+> std::ffi::libc::pthread_join
+> std::ffi::libc::pthread_detach
+> std::ffi::libc::pthread_self
+> std::ffi::libc::sched_yield
+> std::ffi::libc::nanosleep
+> std::ffi::libc::Timespec
+> std::ffi::libc::exit
+> std::sys::errno_location
+> std::sys::eintr
+> std::sys::msg_nosignal
+
+// ---- Number formatting --------------------------------------------------
+
+// Formats `value` with `digits` significant digits into `buf`, C %g style.
+gcvt: F64 -> I32 -> *U8 -> *U8
+< gcvt = value, digits, buf -> std::ffi::libc::gcvt value, digits, buf
+
+// ---- File descriptors -----------------------------------------------------
+
+fd_read: I32 -> *U8 -> I64 -> I64
+< fd_read = fd, buf, len -> read fd, buf, len
+
+fd_write: I32 -> *U8 -> I64 -> I64
+< fd_write = fd, buf, len -> write fd, buf, len
+
+fd_close: I32 -> I32
+< fd_close = fd -> close fd
+
+// ---- Sockets ----------------------------------------------------------------
+// Socket handles are I64 so the Windows backend can hold a SOCKET; -1 is the
+// invalid handle on every backend.
+
+sock_last_error: () -> I32
+< sock_last_error = -> unsafe *(errno_location!)
+
+// An IPv4 stream socket, or -1.
+sock_open: () -> I64
+< sock_open = -> (socket (2 as I32), (1 as I32), (0 as I32)) as I64
+
+sock_bind: I64 -> *U8 -> I32 -> I32
+< sock_bind = sock, addr, len -> bind (sock as I32), addr, len
+
+sock_listen: I64 -> I32 -> I32
+< sock_listen = sock, backlog -> listen (sock as I32), backlog
+
+sock_accept: I64 -> *U8 -> *I32 -> I64
+< sock_accept = sock, addr, len -> (accept (sock as I32), addr, len) as I64
+
+sock_connect: I64 -> *U8 -> I32 -> I32
+< sock_connect = sock, addr, len -> connect (sock as I32), addr, len
+
+sock_getsockname: I64 -> *U8 -> *I32 -> I32
+< sock_getsockname = sock, addr, len -> getsockname (sock as I32), addr, len
+
+sock_recv: I64 -> *U8 -> I64 -> I64
+< sock_recv = sock, buf, len -> read (sock as I32), buf, len
+
+sock_send: I64 -> *U8 -> I64 -> I64
+< sock_send = sock, buf, len -> send (sock as I32), buf, len, msg_nosignal!
+
+// how: 0 = read, 1 = write, 2 = both.
+sock_shutdown: I64 -> I32 -> I32
+< sock_shutdown = sock, how -> shutdown (sock as I32), how
+
+sock_close: I64 -> I32
+< sock_close = sock -> close (sock as I32)
+
+// ---- Threads ----------------------------------------------------------------
+
+// Starts `code(arg)` on a new thread and stores its handle; returns 0 or an
+// error code.
+thread_create: *U8 -> *U8 -> *U64 -> I32
+< thread_create = code, arg, handle -> pthread_create handle, (0 as *U8), code, arg
+
+thread_join: U64 -> I32
+< thread_join = handle ->
+    mut ignored = 0 as U64
+    pthread_join handle, ((&mut ignored) as *U64)
+
+thread_detach: U64 -> I32
+< thread_detach = handle -> pthread_detach handle
+
+thread_current_id: () -> U64
+< thread_current_id = -> pthread_self!
+
+thread_yield: () -> ()
+< thread_yield = ->
+    // POSIX sched_yield has no documented errors. Keep the infallible API,
+    // but fail fast if the operating system rejects this invariant.
+    if sched_yield! != (0 as I32)
+        exit (1 as I32)
+    return
+
+sleep_ms: I64 -> ()
+< sleep_ms = milliseconds ->
+    if milliseconds <= 0
+        return
+    // Split before scaling so long sleeps do not overflow. Retry only EINTR,
+    // using the remaining interval.
+    mut request = Timespec
+        seconds: milliseconds / 1000
+        nanoseconds: (milliseconds % 1000) * 1000000
+    mut remaining = Timespec
+        seconds: 0
+        nanoseconds: 0
+    while (nanosleep ((&request) as *Timespec), ((&mut remaining) as *Timespec)) != (0 as I32)
+        error = unsafe *(errno_location!)
+        if error != (eintr!)
+            exit (1 as I32)
+        request.seconds = remaining.seconds
+        request.nanoseconds = remaining.nanoseconds
+    return

@@ -189,6 +189,7 @@ fn hir_type_ids_collect_top_level_type_locations() {
                 ret: Type::I32,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
         )]),
         HirNameTables {

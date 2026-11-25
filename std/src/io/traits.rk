@@ -1,8 +1,8 @@
 // Portable IO traits and errors.
 
 > std::sys::errno_location
-> std::ffi::libc::read
-> std::ffi::libc::write
+> std::sys::fd_read
+> std::sys::fd_write
 > std::concurrency::arc::Arc
 > std::control::result::Result
 > std::show::Show
@@ -63,7 +63,7 @@ impl Write for Arc W where W: Write
 impl Stdin
     ^@read_bytes: &mut [U8] -> Result I64, IoError
     ^@read_bytes = buf ->
-        count = read 0, buf.as_mut_ptr!, buf.len!
+        count = fd_read (0 as I32), buf.as_mut_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else
@@ -96,7 +96,7 @@ copy: &mut R -> &W -> Result I64, IoError where R: Read, W: Write
 
 impl Write for Stdout
     @write = buf ->
-        count = write 1, buf.as_ptr!, buf.len!
+        count = fd_write (1 as I32), buf.as_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else

@@ -193,6 +193,7 @@ fn hir_program_externs_keep_owned_ids_after_serde_roundtrip_and_rebuild() {
                 ret: Type::I32,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
         )]),
         HirNameTables {
@@ -430,6 +431,7 @@ fn hir_extern_carries_canonical_def_id() {
         ret: Type::I32,
         variadic: false,
         is_unsafe: false,
+        link_name: None,
     };
 
     assert_eq!(extern_fn.id, DefId::new(CrateId(0), LocalDefId(9)));
@@ -444,6 +446,7 @@ fn hir_extern_serde_roundtrips_id() {
         ret: Type::I32,
         variadic: true,
         is_unsafe: false,
+        link_name: None,
     };
 
     let bytes = bincode::serialize(&extern_fn).unwrap();
@@ -473,6 +476,7 @@ fn hir_program_serde_skips_derived_indexes() {
                 ret: Type::I32,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
         )]),
         HirNameTables {
@@ -514,6 +518,7 @@ fn hir_program_indexes_definitions_by_def_id() {
                 ret: Type::I32,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
         )]),
         HirNameTables {

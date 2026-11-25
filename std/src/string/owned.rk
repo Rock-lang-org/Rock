@@ -3,7 +3,7 @@
 // This is a pure std implementation - NOT a compiler builtin.
 // String is a struct that wraps a heap-allocated buffer.
 
-> std::ffi::libc::gcvt
+> std::sys::gcvt
 > std::ffi::libc::memcpy
 > std::ffi::libc::strlen
 > std::ffi::libc::puts

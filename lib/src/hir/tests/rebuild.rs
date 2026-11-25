@@ -178,6 +178,7 @@ fn hir_program_rebuild_indexes_uses_owned_externs_when_order_is_stale() {
                 ret: Type::I32,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
         )]),
         HirNameTables {
@@ -216,6 +217,7 @@ fn hir_program_externs_in_order_uses_owned_externs_when_order_is_stale() {
                     ret: Type::I32,
                     variadic: false,
                     is_unsafe: false,
+                    link_name: None,
                 },
             ),
             (
@@ -227,6 +229,7 @@ fn hir_program_externs_in_order_uses_owned_externs_when_order_is_stale() {
                     ret: Type::I32,
                     variadic: false,
                     is_unsafe: false,
+                    link_name: None,
                 },
             ),
         ]),

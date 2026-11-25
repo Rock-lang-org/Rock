@@ -294,6 +294,8 @@ pub struct ProductExternInterface {
     pub variadic: bool,
     #[serde(default)]
     pub is_unsafe: bool,
+    #[serde(default)]
+    pub link_name: Option<String>,
 }
 
 impl From<&HirExtern> for ProductExternInterface {
@@ -305,6 +307,7 @@ impl From<&HirExtern> for ProductExternInterface {
             ret: ext.ret.clone(),
             variadic: ext.variadic,
             is_unsafe: ext.is_unsafe,
+            link_name: ext.link_name.clone(),
         }
     }
 }

@@ -1,0 +1,237 @@
+// Windows (x64 MSVC) backend for std::sys.
+//
+// Files use the C runtime's descriptor API so they share errno and EINTR
+// handling with the portable code, always in binary mode and opened through
+// the wide (UTF-16) entry point. Sockets use Winsock; threads use Win32. On
+// x64 Windows there is a single calling convention, so these bindings need no
+// stdcall annotation.
+
+> std::ffi::libc::malloc
+> std::ffi::libc::free
+
+// C runtime
+extern _errno: () -> *I32
+extern _wopen: *U16 -> I32 -> I32 -> I32
+extern _read: I32 -> *U8 -> U32 -> I32
+extern _write: I32 -> *U8 -> U32 -> I32
+extern _close: I32 -> I32
+extern _setmode: I32 -> I32 -> I32
+extern _gcvt: F64 -> I32 -> *U8 -> *U8
+
+// kernel32
+extern "MultiByteToWideChar" multi_byte_to_wide_char: U32 -> U32 -> *U8 -> I32 -> *U16 -> I32 -> I32
+extern "CreateThread" create_thread: *U8 -> U64 -> *U8 -> *U8 -> U32 -> *U32 -> *U8
+extern "WaitForSingleObject" wait_for_single_object: *U8 -> U32 -> U32
+extern "CloseHandle" close_handle: *U8 -> I32
+extern "GetLastError" get_last_error: () -> U32
+extern "GetCurrentThreadId" get_current_thread_id: () -> U32
+extern "SwitchToThread" switch_to_thread: () -> I32
+extern "Sleep" sleep: U32 -> ()
+
+// ws2_32
+extern "WSAStartup" wsa_startup: U16 -> *U8 -> I32
+extern "WSAGetLastError" wsa_get_last_error: () -> I32
+extern socket: I32 -> I32 -> I32 -> U64
+extern bind: U64 -> *U8 -> I32 -> I32
+extern listen: U64 -> I32 -> I32
+extern accept: U64 -> *U8 -> *I32 -> U64
+extern connect: U64 -> *U8 -> I32 -> I32
+extern getsockname: U64 -> *U8 -> *I32 -> I32
+extern recv: U64 -> *U8 -> I32 -> I32 -> I32
+extern send: U64 -> *U8 -> I32 -> I32 -> I32
+extern shutdown: U64 -> I32 -> I32
+extern closesocket: U64 -> I32
+
+// ---- C runtime errno and open flags ---------------------------------------
+
+errno_location: () -> *I32
+< errno_location = -> _errno!
+
+o_rdonly: () -> I32
+< o_rdonly = -> 0 as I32
+o_wronly: () -> I32
+< o_wronly = -> 1 as I32
+o_creat: () -> I32
+< o_creat = -> 256 as I32
+o_trunc: () -> I32
+< o_trunc = -> 512 as I32
+o_append: () -> I32
+< o_append = -> 8 as I32
+
+eintr: () -> I32
+< eintr = -> 4 as I32
+
+einval = -> 22 as I32
+o_binary = -> 32768 as I32
+o_noinherit = -> 128 as I32
+// _S_IREAD | _S_IWRITE
+default_mode = -> 384 as I32
+cp_utf8 = -> 65001 as U32
+mb_err_invalid_chars = -> 8 as U32
+
+// Opens a NUL-terminated UTF-8 path. Invalid UTF-8 fails with EINVAL rather
+// than being reinterpreted in the local code page.
+open_file: *U8 -> I32 -> I32
+< open_file = path, flags ->
+    no_output = 0 as *U16
+    units = multi_byte_to_wide_char cp_utf8!, mb_err_invalid_chars!, path, ((0 as I32) - (1 as I32)), no_output, (0 as I32)
+    if units <= (0 as I32)
+        unsafe *(_errno!) = einval!
+        (0 as I32) - (1 as I32)
+    else
+        wide = (malloc ((units as I64) * 2)) as *U16
+        if (wide as I64) == 0
+            unsafe *(_errno!) = 12 as I32
+            (0 as I32) - (1 as I32)
+        else
+            multi_byte_to_wide_char cp_utf8!, mb_err_invalid_chars!, path, ((0 as I32) - (1 as I32)), wide, units
+            fd = _wopen wide, (flags | (o_binary!) | (o_noinherit!)), default_mode!
+            // free must not clobber the error reported for a failed open.
+            error = unsafe *(_errno!)
+            free (wide as *U8)
+            unsafe *(_errno!) = error
+            fd
+
+// ---- Number formatting ----------------------------------------------------
+
+gcvt: F64 -> I32 -> *U8 -> *U8
+< gcvt = value, digits, buf -> _gcvt value, digits, buf
+
+// ---- File descriptors -----------------------------------------------------
+
+// The CRT counts in 32 bits; larger requests become short transfers, which
+// the portable loops already handle.
+max_transfer = -> 1073741824
+
+clamp_len: I64 -> U32
+clamp_len = len ->
+    if len > max_transfer!
+        max_transfer! as U32
+    else
+        len as U32
+
+// Standard streams start in text mode; switch them to binary so bytes pass
+// through unchanged.
+binary_stdio: I32 -> ()
+binary_stdio = fd ->
+    if fd >= (0 as I32) && fd <= (2 as I32)
+        _setmode fd, o_binary!
+    return
+
+fd_read: I32 -> *U8 -> I64 -> I64
+< fd_read = fd, buf, len ->
+    binary_stdio fd
+    (_read fd, buf, (clamp_len len)) as I64
+
+fd_write: I32 -> *U8 -> I64 -> I64
+< fd_write = fd, buf, len ->
+    binary_stdio fd
+    (_write fd, buf, (clamp_len len)) as I64
+
+fd_close: I32 -> I32
+< fd_close = fd -> _close fd
+
+// ---- Sockets --------------------------------------------------------------
+
+sock_last_error: () -> I32
+< sock_last_error = -> wsa_get_last_error!
+
+// INVALID_SOCKET is all ones, which becomes -1 as I64.
+sock_open: () -> I64
+< sock_open = ->
+    // wsa_startup is reference counted and cheap once initialized; calling it
+    // per socket avoids global state. WSADATA is under 512 bytes on x64.
+    mut wsa_data: [U8; 512] = [0; 512]
+    if wsa_startup (514 as U16), ((&mut wsa_data) as *U8) != (0 as I32)
+        0 - 1
+    else
+        (socket (2 as I32), (1 as I32), (6 as I32)) as I64
+
+sock_bind: I64 -> *U8 -> I32 -> I32
+< sock_bind = sock, addr, len -> bind (sock as U64), addr, len
+
+sock_listen: I64 -> I32 -> I32
+< sock_listen = sock, backlog -> listen (sock as U64), backlog
+
+sock_accept: I64 -> *U8 -> *I32 -> I64
+< sock_accept = sock, addr, len -> (accept (sock as U64), addr, len) as I64
+
+sock_connect: I64 -> *U8 -> I32 -> I32
+< sock_connect = sock, addr, len -> connect (sock as U64), addr, len
+
+sock_getsockname: I64 -> *U8 -> *I32 -> I32
+< sock_getsockname = sock, addr, len -> getsockname (sock as U64), addr, len
+
+sock_recv: I64 -> *U8 -> I64 -> I64
+< sock_recv = sock, buf, len -> (recv (sock as U64), buf, ((clamp_len len) as I32), (0 as I32)) as I64
+
+sock_send: I64 -> *U8 -> I64 -> I64
+< sock_send = sock, buf, len -> (send (sock as U64), buf, ((clamp_len len) as I32), (0 as I32)) as I64
+
+sock_shutdown: I64 -> I32 -> I32
+< sock_shutdown = sock, how -> shutdown (sock as U64), how
+
+sock_close: I64 -> I32
+< sock_close = sock -> closesocket (sock as U64)
+
+// struct sockaddr_in starts with a 16-bit address family.
+sockaddr_v4_set_family: *U8 -> ()
+< sockaddr_v4_set_family = buf ->
+    unsafe *(buf as *U16) = 2 as U16
+
+// ---- Threads --------------------------------------------------------------
+
+last_error_code: () -> I32
+last_error_code = ->
+    code = get_last_error! as I32
+    if code == (0 as I32)
+        1 as I32
+    else
+        code
+
+thread_create: *U8 -> *U8 -> *U64 -> I32
+< thread_create = code, arg, handle ->
+    thread = create_thread (0 as *U8), (0 as U64), code, arg, (0 as U32), (0 as *U32)
+    if (thread as I64) == 0
+        last_error_code!
+    else
+        unsafe *handle = thread as U64
+        0 as I32
+
+thread_join: U64 -> I32
+< thread_join = handle ->
+    infinite = 4294967295 as U32
+    if wait_for_single_object (handle as *U8), infinite != (0 as U32)
+        last_error_code!
+    else
+        close_handle (handle as *U8)
+        0 as I32
+
+thread_detach: U64 -> I32
+< thread_detach = handle ->
+    if close_handle (handle as *U8) == (0 as I32)
+        last_error_code!
+    else
+        0 as I32
+
+thread_current_id: () -> U64
+< thread_current_id = -> get_current_thread_id! as U64
+
+thread_yield: () -> ()
+< thread_yield = ->
+    switch_to_thread!
+    return
+
+sleep_ms: I64 -> ()
+< sleep_ms = milliseconds ->
+    mut remaining = milliseconds
+    // Sleep takes a 32-bit count and treats all ones as INFINITE.
+    chunk = 1000000000
+    while remaining > 0
+        step = if remaining > chunk
+            chunk
+        else
+            remaining
+        sleep (step as U32)
+        remaining = remaining - step
+    return

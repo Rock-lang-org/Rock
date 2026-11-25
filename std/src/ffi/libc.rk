@@ -1,8 +1,10 @@
 // libc extern declarations
 //
-// Central module for all C standard library function declarations.
-// All extern functions are exported (< prefix) so they are available
-// to the rest of the std without re-declaration.
+// Central module for C standard library function declarations. All extern
+// functions are exported (< prefix) so they are available to the rest of the
+// std without re-declaration. Bindings whose C signature is not portable are
+// declared only for the targets where it is known; portable std code goes
+// through std::sys instead.
 
 // Memory allocation
 < extern malloc: I64 -> *U8
@@ -17,51 +19,6 @@
 < extern putchar: I32 -> I32
 < extern exit: I32 -> ()
 
-// POSIX sockets and file descriptors
-< extern socket: I32 -> I32 -> I32 -> I32
-< extern bind: I32 -> *U8 -> I32 -> I32
-< extern listen: I32 -> I32 -> I32
-< extern accept: I32 -> *U8 -> *I32 -> I32
-< extern connect: I32 -> *U8 -> I32 -> I32
-< extern read: I32 -> *U8 -> I64 -> I64
-< extern write: I32 -> *U8 -> I64 -> I64
-< extern send: I32 -> *U8 -> I64 -> I32 -> I64
-< extern shutdown: I32 -> I32 -> I32
-< extern close: I32 -> I32
-< extern getsockname: I32 -> *U8 -> *I32 -> I32
-< extern htons: U16 -> U16
-< extern ntohs: U16 -> U16
-< extern htonl: U32 -> U32
-< extern ntohl: U32 -> U32
-
-// Target-specific raw bindings. Portable code uses std::sys instead.
-cfg(target_os = "linux")
-    // Variadic in C; Linux passes the mode like a fixed third argument.
-    < extern open: *U8 -> I32 -> I32 -> I32
-    < extern __errno_location: () -> *I32
-
-cfg(target_os = "macos")
-    // Variadic in C; arm64 Darwin needs the mode on the stack, so this
-    // binding omits it and is only valid without O_CREAT.
-    < extern open: *U8 -> I32 -> I32
-    < extern creat: *U8 -> I32 -> I32
-    < extern __error: () -> *I32
-
-// POSIX threads
-< extern pthread_create: *U64 -> *U8 -> *U8 -> *U8 -> I32
-< extern pthread_join: U64 -> *U64 -> I32
-< extern pthread_detach: U64 -> I32
-< extern pthread_self: () -> U64
-< extern sched_yield: () -> I32
-< extern usleep: U32 -> I32
-
-// LP64 Unix timespec layout: time_t and long are both 64-bit.
-< struct Timespec
-    < seconds: I64
-    < nanoseconds: I64
-
-< extern nanosleep: *Timespec -> *Timespec -> I32
-
 // String functions
 < extern strlen: *U8 -> I64
 < extern strcmp: *U8 -> *U8 -> I32
@@ -69,11 +26,11 @@ cfg(target_os = "macos")
 < extern strcat: *U8 -> *U8 -> *U8
 < extern strstr: *U8 -> *U8 -> *U8
 
-// Conversion functions
+// Conversion functions. strtoll returns a 64-bit integer on every target,
+// unlike atol, whose `long` is 32-bit on Windows.
 < extern atoi: *U8 -> I32
-< extern atol: *U8 -> I64
 < extern atof: *U8 -> F64
-< extern gcvt: F64 -> I64 -> *U8 -> *U8
+< extern strtoll: *U8 -> *U8 -> I32 -> I64
 
 // Math functions (libm)
 < extern sqrt: F64 -> F64
@@ -94,3 +51,52 @@ cfg(target_os = "macos")
 < extern fabs: F64 -> F64
 < extern pow: F64 -> F64 -> F64
 < extern atan2: F64 -> F64 -> F64
+
+// LP64 Unix bindings.
+cfg(target_family = "unix")
+    // POSIX sockets and file descriptors
+    < extern socket: I32 -> I32 -> I32 -> I32
+    < extern bind: I32 -> *U8 -> I32 -> I32
+    < extern listen: I32 -> I32 -> I32
+    < extern accept: I32 -> *U8 -> *I32 -> I32
+    < extern connect: I32 -> *U8 -> I32 -> I32
+    < extern read: I32 -> *U8 -> I64 -> I64
+    < extern write: I32 -> *U8 -> I64 -> I64
+    < extern send: I32 -> *U8 -> I64 -> I32 -> I64
+    < extern shutdown: I32 -> I32 -> I32
+    < extern close: I32 -> I32
+    < extern getsockname: I32 -> *U8 -> *I32 -> I32
+    < extern htons: U16 -> U16
+    < extern ntohs: U16 -> U16
+    < extern htonl: U32 -> U32
+    < extern ntohl: U32 -> U32
+
+    // POSIX threads
+    < extern pthread_create: *U64 -> *U8 -> *U8 -> *U8 -> I32
+    < extern pthread_join: U64 -> *U64 -> I32
+    < extern pthread_detach: U64 -> I32
+    < extern pthread_self: () -> U64
+    < extern sched_yield: () -> I32
+    < extern usleep: U32 -> I32
+
+    // time_t and long are both 64-bit.
+    < struct Timespec
+        < seconds: I64
+        < nanoseconds: I64
+
+    < extern nanosleep: *Timespec -> *Timespec -> I32
+
+    < extern atol: *U8 -> I64
+    < extern gcvt: F64 -> I32 -> *U8 -> *U8
+
+cfg(target_os = "linux")
+    // Variadic in C; Linux passes the mode like a fixed third argument.
+    < extern open: *U8 -> I32 -> I32 -> I32
+    < extern __errno_location: () -> *I32
+
+cfg(target_os = "macos")
+    // Variadic in C; arm64 Darwin needs the mode on the stack, so this
+    // binding omits it and is only valid without O_CREAT.
+    < extern open: *U8 -> I32 -> I32
+    < extern creat: *U8 -> I32 -> I32
+    < extern __error: () -> *I32

@@ -1,4 +1,4 @@
-// Owned POSIX threads with Rust-style spawn and join semantics.
+// Owned OS threads with Rust-style spawn and join semantics.
 
 > std::mem::alloc::Global
 > std::mem::alloc::Layout
@@ -7,15 +7,9 @@
 > std::functional::callable::FnOnce
 > std::mem::drop::Drop
 > std::mem::drop::drop_in_place
-> std::ffi::libc::pthread_create
-> std::ffi::libc::pthread_detach
-> std::ffi::libc::pthread_join
-> std::ffi::libc::pthread_self
-> std::ffi::libc::sched_yield
-> std::ffi::libc::nanosleep
-> std::ffi::libc::Timespec
-> std::sys::errno_location
-> std::sys::eintr
+> std::sys::thread_create
+> std::sys::thread_join
+> std::sys::thread_detach
 > std::ffi::libc::exit
 > std::mem::utils::forget
 > std::mem::utils::sizeof
@@ -161,9 +155,8 @@ spawn: F -> Result (JoinHandle T), ThreadError where F: Send, F: Owned, T: Send,
     code = code_word as *U8
     env = env_word as *U8
     thread_state_set_env state, env, env_bytes
-    null = 0 as *U8
     mut thread = 0 as U64
-    status = pthread_create ((&mut thread) as *U64), null, code, env
+    status = thread_create code, env, ((&mut thread) as *U64)
     if status == (0 as I32)
         forget runner
         Result::Ok (JoinHandle::new thread, state)
@@ -183,8 +176,7 @@ spawn_detached: F -> Result (), ThreadError where F: Send, F: FnOnce (), ()
 impl JoinHandle T
     ~@join: Result T, ThreadError
     ~@join = ->
-        mut env = 0 as U64
-        status = pthread_join self.thread, ((&mut env) as *U64)
+        status = thread_join self.thread
         if status == (0 as I32)
             self.joined = true
             output_ptr = unsafe (*self.state).result
@@ -197,41 +189,21 @@ impl JoinHandle T
 impl Drop for JoinHandle T
     ~@drop = ->
         if !self.joined
-            // Our handle owns one valid, joinable pthread. Failure here means
+            // Our handle owns one valid, joinable thread. Failure here means
             // that ownership invariant was violated; do not silently leak it.
-            status = pthread_detach self.thread
+            status = thread_detach self.thread
             if status != (0 as I32)
                 exit (1 as I32)
             thread_state_release_detached self.state
         return
 
+
 current_id: () -> U64
-< current_id = -> pthread_self!
+< current_id = -> std::sys::thread_current_id!
 
 yield_now: () -> ()
-< yield_now = ->
-    // POSIX sched_yield has no documented errors. Keep the infallible API,
-    // but fail fast if the operating system rejects this invariant.
-    if sched_yield! != (0 as I32)
-        exit (1 as I32)
-    return
+< yield_now = -> std::sys::thread_yield!
 
+// Sleeps at least `milliseconds`; non-positive values return immediately.
 sleep_ms: I64 -> ()
-< sleep_ms = milliseconds ->
-    if milliseconds <= 0
-        return
-    // Split before scaling: converting the whole interval to U32 microseconds
-    // truncated long sleeps. Retry only EINTR, using the remaining interval.
-    mut request = Timespec
-        seconds: milliseconds / 1000
-        nanoseconds: (milliseconds % 1000) * 1000000
-    mut remaining = Timespec
-        seconds: 0
-        nanoseconds: 0
-    while (nanosleep ((&request) as *Timespec), ((&mut remaining) as *Timespec)) != (0 as I32)
-        error = unsafe *(errno_location!)
-        if error != (eintr!)
-            exit (1 as I32)
-        request.seconds = remaining.seconds
-        request.nanoseconds = remaining.nanoseconds
-    return
+< sleep_ms = milliseconds -> std::sys::sleep_ms milliseconds

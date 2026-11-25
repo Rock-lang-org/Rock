@@ -341,6 +341,7 @@ impl SerializedProductExternInterface {
             ret: encoder.encode_type(&value.ret)?,
             variadic: value.variadic,
             is_unsafe: value.is_unsafe,
+            link_name: value.link_name.clone(),
         })
     }
 
@@ -355,6 +356,7 @@ impl SerializedProductExternInterface {
             ret: decoder.decode_type(self.ret)?,
             variadic: self.variadic,
             is_unsafe: self.is_unsafe,
+            link_name: self.link_name,
         })
     }
 }

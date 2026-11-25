@@ -271,6 +271,7 @@ fn named_callable_does_not_resolve_extern_from_display_name_table() {
                 ret: Type::I64,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
         )]),
         HirNameTables {

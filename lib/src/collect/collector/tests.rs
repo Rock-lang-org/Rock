@@ -55,6 +55,7 @@ fn function_sig(name: &str) -> FunctionSig {
         self_receiver: None,
         is_unsafe: false,
         exported: false,
+        link_name: None,
     }
 }
 

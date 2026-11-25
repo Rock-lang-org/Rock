@@ -233,6 +233,7 @@ fn trait_default_signature_stub_uses_canonical_params_without_duplicate_self() {
                 self_receiver: Some(SelfReceiverMode::Mut),
                 is_unsafe: false,
                 exported: false,
+                link_name: None,
             },
         )]),
         exported: false,

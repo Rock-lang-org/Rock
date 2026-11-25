@@ -16,8 +16,8 @@
 > std::sys::o_trunc
 > std::sys::o_append
 > std::sys::eintr
-> std::ffi::libc::read
-> std::ffi::libc::write
+> std::sys::fd_read
+> std::sys::fd_write
 > std::control::result::Result
 > std::string::owned::String
 > std::collections::vec::Vec
@@ -78,7 +78,7 @@ impl File
 impl Read for File
     ^@read: &mut [U8] -> Result I64, IoError
     ^@read = buf ->
-        count = read self.fd, buf.as_mut_ptr!, buf.len!
+        count = fd_read self.fd, buf.as_mut_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else
@@ -113,7 +113,7 @@ read_to_string: &Str -> Result String, IoError
 impl Write for File
     @write: &[U8] -> Result I64, IoError
     @write = buf ->
-        count = write self.fd, buf.as_ptr!, buf.len!
+        count = fd_write self.fd, buf.as_ptr!, buf.len!
         if count < 0
             Result::Err (last_os_error!)
         else

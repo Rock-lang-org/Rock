@@ -417,6 +417,7 @@ fn lowerer_from_declarations_extern_import_alias_lowers_to_resolved_extern() {
                     ret: Type::I32,
                     variadic: false,
                     is_unsafe: false,
+                    link_name: None,
                 },
             )]),
         ),
@@ -457,6 +458,7 @@ fn injected_prelude_scope_only_extern_alias_lowers_to_resolved_extern() {
         ret: Type::I32,
         variadic: false,
         is_unsafe: false,
+        link_name: None,
     });
     lowerer.scope.define(
         "std::libc::puts".to_string(),

@@ -92,6 +92,48 @@ fn test_cfg_loads_inactive_files_only_when_their_target_is_selected() {
 }
 
 #[test]
+fn test_extern_link_name_binds_a_foreign_symbol_under_a_rock_name() {
+    let status = compile_and_run_without_std(
+        r#"
+extern "abs" c_abs: I32 -> I32
+
+main = -> (c_abs (~IntWrappingSub (0 as I32), (42 as I32))) as I64
+"#,
+    );
+    assert_eq!(status, 42);
+}
+
+// No native runner exists for macOS or Windows here, so at least keep std
+// compiling for every supported target; each backend is selected by cfg.
+#[test]
+fn test_std_compiles_for_every_supported_target() {
+    let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = test_temp_dir(id);
+    let _cleanup = TestDirCleanup(dir.clone());
+    for (target, magic) in [
+        ("x86_64-unknown-linux-gnu", &[0x7f, b'E', b'L', b'F'][..]),
+        ("aarch64-apple-darwin", &[0xcf, 0xfa, 0xed, 0xfe][..]),
+        ("x86_64-pc-windows-msvc", &[0x64, 0x86][..]),
+    ] {
+        let out = dir.join(target);
+        let object = out.join("std.o");
+        let mut config = test_config(std_path().join("src/lib.rk"), out.clone());
+        config.extern_artifacts.clear();
+        config.no_std = true;
+        config.no_link = true;
+        config.crate_kind = rock_lib::CrateKind::Lib;
+        config.current_crate_name = Some("std".to_string());
+        config.target = Some(target.to_string());
+        config.emit_object = Some(object.clone());
+        if let Err(diagnostics) = rock_lib::compile(&config) {
+            panic!("std failed for {target}:\n{}", messages(&diagnostics));
+        }
+        let bytes = fs::read(&object).unwrap();
+        assert_eq!(&bytes[..magic.len()], magic, "object format for {target}");
+    }
+}
+
+#[test]
 fn test_cfg_emits_objects_for_the_selected_target() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);

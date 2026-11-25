@@ -1,15 +1,42 @@
 // Private operating-system backends.
 //
 // Portable std code imports from `std::sys` only. Exactly one backend is
-// active per target; inactive backend files are never loaded. Every backend
-// exports the same operations:
+// active per target; inactive backend files are never loaded. Each target
+// provides the same operations (see posix.rk for their contracts):
 //
-//   errno_location: () -> *I32         thread-local errno slot
-//   open_file: *U8 -> I32 -> I32       open(2) with the default creation mode
-//   o_rdonly, o_wronly, o_creat, o_trunc, o_append: () -> I32
+//   errno_location: () -> *I32         thread-local C runtime errno slot
 //   eintr: () -> I32
-//   msg_nosignal: () -> I32            send(2) flag suppressing SIGPIPE
-//   sockaddr_v4_set_family: *U8 -> ()  writes the family header of sockaddr_in
+//   open_file: *U8 -> I32 -> I32       open a NUL-terminated UTF-8 path
+//   o_rdonly, o_wronly, o_creat, o_trunc, o_append: () -> I32
+//   fd_read, fd_write, fd_close        C runtime descriptor I/O
+//   sock_*                             IPv4 TCP sockets as I64 handles
+//   sockaddr_v4_set_family: *U8 -> ()  family header of struct sockaddr_in
+//   thread_*, sleep_ms                 OS threads and sleeping
+//   gcvt: F64 -> I32 -> *U8 -> *U8     C %g float formatting
+
+cfg(target_family = "unix")
+    mod posix
+    < posix::gcvt
+    < posix::fd_read
+    < posix::fd_write
+    < posix::fd_close
+    < posix::sock_last_error
+    < posix::sock_open
+    < posix::sock_bind
+    < posix::sock_listen
+    < posix::sock_accept
+    < posix::sock_connect
+    < posix::sock_getsockname
+    < posix::sock_recv
+    < posix::sock_send
+    < posix::sock_shutdown
+    < posix::sock_close
+    < posix::thread_create
+    < posix::thread_join
+    < posix::thread_detach
+    < posix::thread_current_id
+    < posix::thread_yield
+    < posix::sleep_ms
 
 cfg(target_os = "linux")
     mod linux
@@ -36,3 +63,36 @@ cfg(target_os = "macos")
     < macos::eintr
     < macos::msg_nosignal
     < macos::sockaddr_v4_set_family
+
+cfg(target_os = "windows")
+    mod windows
+    < windows::errno_location
+    < windows::open_file
+    < windows::o_rdonly
+    < windows::o_wronly
+    < windows::o_creat
+    < windows::o_trunc
+    < windows::o_append
+    < windows::eintr
+    < windows::sockaddr_v4_set_family
+    < windows::gcvt
+    < windows::fd_read
+    < windows::fd_write
+    < windows::fd_close
+    < windows::sock_last_error
+    < windows::sock_open
+    < windows::sock_bind
+    < windows::sock_listen
+    < windows::sock_accept
+    < windows::sock_connect
+    < windows::sock_getsockname
+    < windows::sock_recv
+    < windows::sock_send
+    < windows::sock_shutdown
+    < windows::sock_close
+    < windows::thread_create
+    < windows::thread_join
+    < windows::thread_detach
+    < windows::thread_current_id
+    < windows::thread_yield
+    < windows::sleep_ms

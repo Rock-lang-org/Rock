@@ -12,8 +12,8 @@ use crate::{
 };
 
 use super::{
-    enum_decl, function_decl, function_sig, macro_decl, macro_invoc, module, operator, parse_type,
-    path, primitives, r#impl, r#trait, struct_decl,
+    enum_decl, extern_sig, function_decl, function_sig, macro_decl, macro_invoc, module, operator,
+    parse_type, path, primitives, r#impl, r#trait, struct_decl,
 };
 
 fn path_segments(path: &crate::ast::Path) -> Vec<String> {
@@ -223,7 +223,7 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
             .or(infix_operator_decl
                 .map(|(precedence, name)| TopLevel::InfixOperator(precedence, name)))
             .or(
-                preceded(TokenType::Keyword("extern".to_string()), function_sig)
+                preceded(TokenType::Keyword("extern".to_string()), extern_sig)
                     .map(TopLevel::Extern),
             )
             .or(preceded(
@@ -310,7 +310,7 @@ pub fn top_level(stream: Input) -> IResult<TopLevel> {
                 TokenType::Operator("<".to_string()),
                 preceded(
                     TokenType::Keyword("extern".to_string()),
-                    function_sig.map(|mut sig| {
+                    extern_sig.map(|mut sig| {
                         sig.exported = true;
                         sig
                     }),

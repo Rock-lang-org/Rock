@@ -33,6 +33,7 @@ fn function_sig_formats_self_receiver_prefixes() {
             self_receiver,
             is_unsafe: false,
             exported: false,
+            link_name: None,
         };
 
         assert_eq!(format_node(&sig), expected);

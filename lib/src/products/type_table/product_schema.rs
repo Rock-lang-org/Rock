@@ -196,4 +196,6 @@ pub(in crate::products) struct SerializedProductExternInterface {
     pub variadic: bool,
     #[serde(default)]
     pub is_unsafe: bool,
+    #[serde(default)]
+    pub link_name: Option<String>,
 }

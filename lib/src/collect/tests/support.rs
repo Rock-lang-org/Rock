@@ -144,6 +144,7 @@ pub(super) fn function_sig(name: &str, sig: ParseType) -> FunctionSig {
         self_receiver: None,
         is_unsafe: false,
         exported: false,
+        link_name: None,
     }
 }
 

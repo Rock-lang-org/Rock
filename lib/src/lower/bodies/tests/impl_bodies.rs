@@ -413,6 +413,7 @@ fn lower_impl_bodies_context_owner_matches_trait_args() {
                 self_receiver: None,
                 is_unsafe: false,
                 exported: false,
+                link_name: None,
             },
         )]),
         where_clauses: Vec::new(),

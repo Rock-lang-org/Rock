@@ -386,6 +386,10 @@ pub struct FunctionSig {
     pub self_receiver: Option<SelfReceiverMode>,
     pub is_unsafe: bool,
     pub exported: bool,
+    /// Foreign symbol for an `extern "Symbol" name: ...` declaration whose C
+    /// name is not a valid Rock function name; `None` links by `name`.
+    #[serde(default)]
+    pub link_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

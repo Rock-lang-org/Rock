@@ -422,6 +422,7 @@ fn collect_assigns_canonical_id_to_signature_backed_function_header() {
                     self_receiver: None,
                     is_unsafe: false,
                     exported: false,
+                    link_name: None,
                 }),
                 TopLevel::FunctionDecl(FunctionDecl {
                     name: ident("identity"),

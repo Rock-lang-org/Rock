@@ -45,6 +45,7 @@ fn test_extern(id: DefId) -> HirExtern {
         ret: Type::Unit,
         variadic: false,
         is_unsafe: false,
+        link_name: None,
     }
 }
 

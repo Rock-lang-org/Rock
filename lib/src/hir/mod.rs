@@ -314,6 +314,16 @@ pub struct HirExtern {
     pub variadic: bool,
     #[serde(default)]
     pub is_unsafe: bool,
+    /// Foreign symbol when it differs from `name`.
+    #[serde(default)]
+    pub link_name: Option<String>,
+}
+
+impl HirExtern {
+    /// The symbol this extern links against.
+    pub fn symbol(&self) -> &str {
+        self.link_name.as_deref().unwrap_or(&self.name)
+    }
 }
 
 impl HirExtern {

@@ -366,6 +366,7 @@ fn lower_import_alias_extern_reference_records_extern_id() {
         ret: Type::I32,
         variadic: false,
         is_unsafe: false,
+        link_name: None,
     });
     lowerer.scope.define_alias(
         "puts".to_string(),

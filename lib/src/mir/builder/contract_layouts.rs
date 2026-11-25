@@ -34,10 +34,10 @@ impl<'a> MirBuilder<'a> {
                             key,
                             source_def_id: Some(ext.id),
                             kind: crate::mir::MirCallableKind::Extern {
-                                link_name: ext.name.clone(),
+                                link_name: ext.symbol().to_string(),
                                 variadic: ext.variadic,
                             },
-                            llvm_symbol: ext.name.clone(),
+                            llvm_symbol: ext.symbol().to_string(),
                             linkage: crate::mir::MirLinkage::External,
                             signature: crate::mir::MirCallableSignature::from_type_ids(
                                 &params,

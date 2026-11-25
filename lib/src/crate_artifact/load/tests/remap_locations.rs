@@ -166,6 +166,7 @@ fn remap_expr_child_locations_remaps_call_target_sidecars() {
             ret: Type::I64,
             variadic: false,
             is_unsafe: false,
+            link_name: None,
         },
     );
     let child_validator = super::ProductChildLocationValidator::from_products(&products);

@@ -1,13 +1,13 @@
-// One-shot Linux descriptor close. The kernel releases the fd before reporting
+// One-shot descriptor close. The kernel releases the fd before reporting
 // most errors, including EINTR: retrying may close another thread's reused fd.
-> std::ffi::libc::close
+> std::sys::fd_close
 > std::io::traits::IoError
 > std::io::traits::last_os_error
 > std::control::result::Result
 
 close_fd: I32 -> Result (), IoError
 < close_fd = fd ->
-    if close fd < (0 as I32)
+    if fd_close fd < (0 as I32)
         Result::Err (last_os_error!)
     else
         Result::Ok ()

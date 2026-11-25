@@ -91,6 +91,22 @@ fn cfg_rejects_bad_arity_and_empty_blocks() {
 }
 
 #[test]
+fn extern_accepts_an_optional_link_name() {
+    let items = parse_for(
+        "x86_64-unknown-linux-gnu",
+        "extern \"CreateThread\" create_thread: *U8 -> I32\n< extern plain: I32 -> I32\n",
+    )
+    .unwrap();
+    let [TopLevel::Extern(named), TopLevel::Extern(plain)] = items.as_slice() else {
+        panic!("expected two externs, got {items:?}");
+    };
+    assert_eq!(named.name.name, "create_thread");
+    assert_eq!(named.link_name.as_deref(), Some("CreateThread"));
+    assert!(plain.exported);
+    assert_eq!(plain.link_name, None);
+}
+
+#[test]
 fn cfg_name_stays_usable_as_an_identifier() {
     let items = parse_for("x86_64-unknown-linux-gnu", "cfg = -> 1\n").unwrap();
     assert_eq!(item_names(&items), ["cfg"]);

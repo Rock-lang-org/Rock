@@ -259,6 +259,7 @@ pub(super) fn resolved_hir_for_products() -> ResolvedHirProgram {
             ret: Type::I32,
             variadic: false,
             is_unsafe: false,
+            link_name: None,
         },
     )]);
 

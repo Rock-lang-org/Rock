@@ -221,6 +221,7 @@ fn compiler_products_preserve_real_extern_id_zero_without_collision() {
                     ret: Type::I32,
                     variadic: false,
                     is_unsafe: false,
+                    link_name: None,
                 },
             )]),
             HirNameTables {

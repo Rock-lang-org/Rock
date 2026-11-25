@@ -176,6 +176,7 @@ fn declaration_item_diagnostics_are_deterministic_across_input_orders() {
                 ret: Type::Unit,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
             HirExtern {
                 id: extern_ids[1],
@@ -184,6 +185,7 @@ fn declaration_item_diagnostics_are_deterministic_across_input_orders() {
                 ret: Type::Unit,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
             HirExtern {
                 id: extern_ids[0],
@@ -192,6 +194,7 @@ fn declaration_item_diagnostics_are_deterministic_across_input_orders() {
                 ret: Type::Unit,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
             HirExtern {
                 id: extern_ids[1],
@@ -200,6 +203,7 @@ fn declaration_item_diagnostics_are_deterministic_across_input_orders() {
                 ret: Type::Unit,
                 variadic: false,
                 is_unsafe: false,
+                link_name: None,
             },
         ];
         if reverse {

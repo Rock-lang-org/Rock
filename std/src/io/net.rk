@@ -1,22 +1,22 @@
-// Blocking IPv4 TCP networking.
+// Blocking IPv4 TCP networking over std::sys socket handles.
 
 > std::mem::drop::Drop
 > std::io::traits::IoError
 > std::io::traits::Read
 > std::io::traits::Write
-> std::io::traits::last_os_error
 > std::io::traits::write_all
 > std::io::traits::write_str
-> std::ffi::libc::socket
-> std::ffi::libc::listen
-> std::ffi::libc::send
-> std::ffi::libc::getsockname
-> std::ffi::libc::htons
-> std::ffi::libc::ntohs
-> std::ffi::libc::htonl
-> std::ffi::libc::ntohl
-> std::io::fd::close_fd
-> std::sys::msg_nosignal
+> std::sys::sock_last_error
+> std::sys::sock_open
+> std::sys::sock_bind
+> std::sys::sock_listen
+> std::sys::sock_accept
+> std::sys::sock_connect
+> std::sys::sock_getsockname
+> std::sys::sock_recv
+> std::sys::sock_send
+> std::sys::sock_shutdown
+> std::sys::sock_close
 > std::sys::sockaddr_v4_set_family
 > std::mem::raw_buffer::RawBuffer
 > std::control::result::Result
@@ -31,16 +31,15 @@
     < ip: Ipv4Addr
     < port: I64
 
+// A negative handle means the socket was already closed explicitly.
 < struct TcpListener
-    fd: I32
+    sock: I64
 
 < struct TcpStream
-    fd: I32
+    sock: I64
 
-af_inet = -> 2
-sock_stream = -> 1
-sockaddr_in_len = -> 16
-somaxconn_default = -> 128
+sockaddr_in_len = -> 16 as I32
+somaxconn_default = -> 128 as I32
 
 unit = ->
     return
@@ -48,18 +47,11 @@ unit = ->
 port_is_valid: I64 -> Bool
 port_is_valid = port -> port >= 0 && port <= 65535
 
-ipv4_to_u32: Ipv4Addr -> U32
-ipv4_to_u32 = ip ->
-    ((ip.a as U32) << (24 as U32)) | ((ip.b as U32) << (16 as U32)) | ((ip.c as U32) << (8 as U32)) | (ip.d as U32)
+last_socket_error: () -> IoError
+last_socket_error = -> IoError::Os (sock_last_error!)
 
-u32_to_ipv4: U32 -> Ipv4Addr
-u32_to_ipv4 = value ->
-    Ipv4Addr
-        a: ((value >> (24 as U32)) & (255 as U32)) as U8
-        b: ((value >> (16 as U32)) & (255 as U32)) as U8
-        c: ((value >> (8 as U32)) & (255 as U32)) as U8
-        d: (value & (255 as U32)) as U8
-
+// struct sockaddr_in: family header (backend-specific), port and address in
+// network byte order, zero padding.
 sockaddr_v4_new: SocketAddrV4 -> RawBuffer U8
 sockaddr_v4_new = addr ->
     raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (sockaddr_in_len! as I64)
@@ -69,48 +61,63 @@ sockaddr_v4_new = addr ->
         unsafe buf[i] = 0
         i = i + 1
     sockaddr_v4_set_family buf
+    port = addr.port as U16
     unsafe
-        *((buf + 2) as *U16) = htons (addr.port as U16)
-        *((buf + 4) as *U32) = htonl (ipv4_to_u32 addr.ip)
+        buf[2] = (port >> (8 as U16)) as U8
+        buf[3] = (port & (255 as U16)) as U8
+        buf[4] = addr.ip.a
+        buf[5] = addr.ip.b
+        buf[6] = addr.ip.c
+        buf[7] = addr.ip.d
     raw
 
 sockaddr_v4_read: *U8 -> SocketAddrV4
 sockaddr_v4_read = buf ->
-    port = ntohs (unsafe *((buf + 2) as *U16))
-    ip = ntohl (unsafe *((buf + 4) as *U32))
+    high = unsafe buf[2]
+    low = unsafe buf[3]
     SocketAddrV4
-        ip: u32_to_ipv4 ip
-        port: port as I64
+        ip: Ipv4Addr
+            a: unsafe buf[4]
+            b: unsafe buf[5]
+            c: unsafe buf[6]
+            d: unsafe buf[7]
+        port: ((high as I64) * 256) + (low as I64)
 
-tcp_listener_from_fd: I32 -> TcpListener
-tcp_listener_from_fd = fd ->
-    unsafe *((&fd) as *TcpListener)
+tcp_listener: I64 -> TcpListener
+tcp_listener = sock ->
+    unsafe *((&sock) as *TcpListener)
 
-tcp_stream_from_fd: I32 -> TcpStream
-tcp_stream_from_fd = fd ->
-    unsafe *((&fd) as *TcpStream)
+tcp_stream: I64 -> TcpStream
+tcp_stream = sock ->
+    unsafe *((&sock) as *TcpStream)
 
-tcp_stream_read_fd: I32 -> &mut [U8] -> Result I64, IoError
-tcp_stream_read_fd = fd, buf ->
-    count = std::ffi::libc::read fd, buf.as_mut_ptr!, buf.len!
+close_socket: I64 -> Result (), IoError
+close_socket = sock ->
+    if sock_close sock < (0 as I32)
+        Result::Err (last_socket_error!)
+    else
+        Result::Ok (unit!)
+
+tcp_stream_read: I64 -> &mut [U8] -> Result I64, IoError
+tcp_stream_read = sock, buf ->
+    count = sock_recv sock, buf.as_mut_ptr!, buf.len!
     if count < 0
-        Result::Err (last_os_error!)
+        Result::Err (last_socket_error!)
     else
         Result::Ok count
 
-tcp_stream_write_fd: I32 -> &[U8] -> Result I64, IoError
-tcp_stream_write_fd = fd, buf ->
-    count = send fd, buf.as_ptr!, buf.len!, msg_nosignal!
+tcp_stream_write: I64 -> &[U8] -> Result I64, IoError
+tcp_stream_write = sock, buf ->
+    count = sock_send sock, buf.as_ptr!, buf.len!
     if count < 0
-        Result::Err (last_os_error!)
+        Result::Err (last_socket_error!)
     else
         Result::Ok count
 
-tcp_stream_shutdown_fd: I32 -> Result (), IoError
-tcp_stream_shutdown_fd = fd ->
-    result = std::ffi::libc::shutdown fd, 2
-    if result < (0 as I32)
-        Result::Err (last_os_error!)
+tcp_shutdown: I64 -> I32 -> Result (), IoError
+tcp_shutdown = sock, how ->
+    if sock_shutdown sock, how < (0 as I32)
+        Result::Err (last_socket_error!)
     else
         Result::Ok (unit!)
 
@@ -159,50 +166,44 @@ impl TcpListener
             err = IoError::InvalidAddress
             Result::Err err
         else
-            fd = socket af_inet!, sock_stream!, 0
-            if fd < (0 as I32)
-                Result::Err (last_os_error!)
+            sock = sock_open!
+            if sock < 0
+                Result::Err (last_socket_error!)
             else
                 sockaddr = sockaddr_v4_new addr
-                bind_result = std::ffi::libc::bind fd, sockaddr.ptr!, sockaddr_in_len!
-                if bind_result < (0 as I32)
-                    err = last_os_error!
+                if sock_bind sock, sockaddr.ptr!, sockaddr_in_len! < (0 as I32)
                     // Preserve the bind error; cleanup must not replace it.
-                    close_fd fd
+                    err = last_socket_error!
+                    close_socket sock
+                    Result::Err (err)
+                else if sock_listen sock, somaxconn_default! < (0 as I32)
+                    err = last_socket_error!
+                    close_socket sock
                     Result::Err (err)
                 else
-                    listen_result = listen fd, somaxconn_default!
-                    if listen_result < (0 as I32)
-                        err = last_os_error!
-                        close_fd fd
-                        Result::Err (err)
-                    else
-                        Result::Ok (tcp_listener_from_fd fd)
+                    Result::Ok (tcp_listener sock)
 
 impl TcpListener
     @local_addr: Result SocketAddrV4, IoError
     @local_addr = ->
         sockaddr = sockaddr_v4_new (SocketAddrV4::any 0)
         mut len = sockaddr_in_len!
-        result = getsockname self.fd, sockaddr.ptr!, ((&mut len) as *I32)
+        result = sock_getsockname self.sock, sockaddr.ptr!, ((&mut len) as *I32)
         if result < (0 as I32)
-            err = last_os_error!
-            Result::Err (err)
+            Result::Err (last_socket_error!)
         else
-            addr = sockaddr_v4_read (sockaddr.ptr!)
-            Result::Ok (addr)
+            Result::Ok (sockaddr_v4_read (sockaddr.ptr!))
 
 impl TcpListener
     @accept: Result TcpStream, IoError
     @accept = ->
         sockaddr = sockaddr_v4_new (SocketAddrV4::any 0)
         mut len = sockaddr_in_len!
-        fd = std::ffi::libc::accept self.fd, sockaddr.ptr!, ((&mut len) as *I32)
-        if fd < (0 as I32)
-            err = last_os_error!
-            Result::Err (err)
+        sock = sock_accept self.sock, sockaddr.ptr!, ((&mut len) as *I32)
+        if sock < 0
+            Result::Err (last_socket_error!)
         else
-            Result::Ok (tcp_stream_from_fd fd)
+            Result::Ok (tcp_stream sock)
 
 impl TcpStream
     connect: SocketAddrV4 -> Result TcpStream, IoError
@@ -211,28 +212,27 @@ impl TcpStream
             err = IoError::InvalidAddress
             Result::Err err
         else
-            fd = socket af_inet!, sock_stream!, 0
-            if fd < (0 as I32)
-                Result::Err (last_os_error!)
+            sock = sock_open!
+            if sock < 0
+                Result::Err (last_socket_error!)
             else
                 sockaddr = sockaddr_v4_new addr
-                connect_result = std::ffi::libc::connect fd, sockaddr.ptr!, sockaddr_in_len!
-                if connect_result < (0 as I32)
-                    err = last_os_error!
-                    close_fd fd
+                if sock_connect sock, sockaddr.ptr!, sockaddr_in_len! < (0 as I32)
+                    err = last_socket_error!
+                    close_socket sock
                     Result::Err (err)
                 else
-                    Result::Ok (tcp_stream_from_fd fd)
+                    Result::Ok (tcp_stream sock)
 
 impl Read for TcpStream
     ^@read: &mut [U8] -> Result I64, IoError
     ^@read = buf ->
-        tcp_stream_read_fd self.fd, buf
+        tcp_stream_read self.sock, buf
 
 impl Write for TcpStream
     @write: &[U8] -> Result I64, IoError
     @write = buf ->
-        tcp_stream_write_fd self.fd, buf
+        tcp_stream_write self.sock, buf
 
     @write_str = value -> write_str self, value
     @write_all = buf -> write_all self, buf
@@ -240,48 +240,43 @@ impl Write for TcpStream
 impl TcpStream
     @recv: &mut [U8] -> Result I64, IoError
     @recv = buf ->
-        tcp_stream_read_fd self.fd, buf
+        tcp_stream_read self.sock, buf
 
     @send: &[U8] -> Result I64, IoError
     @send = buf ->
-        tcp_stream_write_fd self.fd, buf
+        tcp_stream_write self.sock, buf
 
     @shutdown: Result (), IoError
     @shutdown = ->
-        tcp_stream_shutdown_fd self.fd
+        tcp_shutdown self.sock, (2 as I32)
 
     @shutdown_write: Result (), IoError
     @shutdown_write = ->
-        result = std::ffi::libc::shutdown self.fd, 1
-        if result < (0 as I32)
-            Result::Err (last_os_error!)
-        else
-            Result::Ok (unit!)
+        tcp_shutdown self.sock, (1 as I32)
 
 impl TcpListener
     ~@close: Result (), IoError
     ~@close = ->
-        fd = self.fd
-        self.fd = (0 as I32) - (1 as I32)
-        close_fd fd
+        sock = self.sock
+        self.sock = 0 - 1
+        close_socket sock
 
 impl TcpStream
     ~@close: Result (), IoError
     ~@close = ->
-        fd = self.fd
-        self.fd = (0 as I32) - (1 as I32)
-        close_fd fd
+        sock = self.sock
+        self.sock = 0 - 1
+        close_socket sock
 
 // Destructors cannot return errors: use explicit close to observe them.
-// Negative fd means explicit close already ran, even if it returned an error.
 impl Drop for TcpListener
     ~@drop = ->
-        if self.fd >= (0 as I32)
-            close_fd self.fd
+        if self.sock >= 0
+            close_socket self.sock
         return
 
 impl Drop for TcpStream
     ~@drop = ->
-        if self.fd >= (0 as I32)
-            close_fd self.fd
+        if self.sock >= 0
+            close_socket self.sock
         return

@@ -666,6 +666,7 @@ fn collect_preserves_import_aliases_infix_precedence_and_function_signatures() {
                     self_receiver: None,
                     is_unsafe: false,
                     exported: false,
+                    link_name: None,
                 }),
             ],
             is_inline: false,

@@ -95,7 +95,7 @@ main = ->
 }
 
 #[test]
-fn test_tcp_listener_fd_field_is_private() {
+fn test_tcp_listener_socket_field_is_private() {
     compile_should_fail(
         r#"
 > std::control::Result
@@ -105,16 +105,16 @@ fn test_tcp_listener_fd_field_is_private() {
 main = ->
     match (TcpListener::bind (SocketAddrV4::localhost 0))
         Result::Ok listener =>
-            fd = listener.fd
-            fd as I64
+            sock = listener.sock
+            sock
         Result::Err _ => 1
 "#,
-        "Field 'fd' of struct 'TcpListener' is private",
+        "Field 'sock' of struct 'TcpListener' is private",
     );
 }
 
 #[test]
-fn test_tcp_stream_fd_field_is_private() {
+fn test_tcp_stream_socket_field_is_private() {
     compile_should_fail(
         r#"
 > std::control::Result
@@ -124,11 +124,11 @@ fn test_tcp_stream_fd_field_is_private() {
 main = ->
     match (TcpStream::connect (SocketAddrV4::localhost 1))
         Result::Ok stream =>
-            fd = stream.fd
-            fd as I64
+            sock = stream.sock
+            sock
         Result::Err _ => 1
 "#,
-        "Field 'fd' of struct 'TcpStream' is private",
+        "Field 'sock' of struct 'TcpStream' is private",
     );
 }
 

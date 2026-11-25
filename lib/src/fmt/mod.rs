@@ -226,6 +226,9 @@ impl FormatNode for TopLevel {
             }
             TopLevel::Extern(sig) => {
                 write!(f, "extern ")?;
+                if let Some(link_name) = &sig.link_name {
+                    write!(f, "\"{}\" ", link_name)?;
+                }
                 sig.fmt_with(context, f)
             }
             TopLevel::FunctionSig(sig) => sig.fmt_with(context, f),

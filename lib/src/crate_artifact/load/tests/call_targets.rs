@@ -43,6 +43,7 @@ fn product_artifact_rejects_resolved_var_function_target_to_extern() {
             ret: Type::I64,
             variadic: false,
             is_unsafe: false,
+            link_name: None,
         },
     );
     let mut expr = HirExpr {
@@ -171,6 +172,7 @@ fn load_product_artifact_rejects_dependency_resolved_var_function_target_to_exte
             ret: Type::I64,
             variadic: false,
             is_unsafe: false,
+            link_name: None,
         },
     );
     dep_products.write_artifact_to_path(&dep_artifact).unwrap();
@@ -240,6 +242,7 @@ fn load_product_artifact_accepts_dependency_resolved_var_extern_target() {
             ret: Type::I64,
             variadic: false,
             is_unsafe: false,
+            link_name: None,
         },
     );
     dep_products.write_artifact_to_path(&dep_artifact).unwrap();
@@ -676,6 +679,7 @@ fn load_product_artifact_accepts_resolved_var_extern_display_name_mismatch() {
             ret: Type::I64,
             variadic: false,
             is_unsafe: false,
+            link_name: None,
         },
     );
     let mut function = products.bodies.functions[&function_id].clone();

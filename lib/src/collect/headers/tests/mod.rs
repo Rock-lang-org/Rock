@@ -105,6 +105,7 @@ fn function_sig(
         self_receiver,
         is_unsafe: false,
         exported: false,
+        link_name: None,
     }
 }
 

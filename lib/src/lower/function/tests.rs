@@ -33,6 +33,7 @@ fn generic_identity_signature(name: &str) -> FunctionSig {
         self_receiver: None,
         is_unsafe: false,
         exported: false,
+        link_name: None,
     }
 }
 
@@ -95,6 +96,7 @@ fn lower_method_signature_injects_shared_self_receiver_type() {
         self_receiver: Some(SelfReceiverMode::Shared),
         is_unsafe: false,
         exported: false,
+        link_name: None,
     };
 
     let hir_sig = lowerer.lower_function_sig_with_id(&sig, signature_id);
@@ -133,6 +135,7 @@ fn lower_method_signature_injects_mut_and_move_self_receiver_types() {
         self_receiver: Some(SelfReceiverMode::Mut),
         is_unsafe: false,
         exported: false,
+        link_name: None,
     };
     let move_sig = FunctionSig {
         name: ident("consume"),
@@ -141,6 +144,7 @@ fn lower_method_signature_injects_mut_and_move_self_receiver_types() {
         self_receiver: Some(SelfReceiverMode::Move),
         is_unsafe: false,
         exported: false,
+        link_name: None,
     };
 
     let mut_hir = lowerer.lower_function_sig_with_id(&mut_sig, def_id(31));

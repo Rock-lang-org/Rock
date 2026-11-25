@@ -109,6 +109,7 @@ fn test_extern(id: DefId) -> HirExtern {
         ret: Type::Unit,
         variadic: false,
         is_unsafe: false,
+        link_name: None,
     }
 }
 
@@ -174,6 +175,7 @@ fn lowerer_from_declarations_preserves_real_local_extern_id_zero() {
                     ret: Type::I32,
                     variadic: false,
                     is_unsafe: false,
+                    link_name: None,
                 },
             )]),
         ),

@@ -463,6 +463,7 @@ fn format_input_formats_program_like_convenience_function() {
                 self_receiver: None,
                 is_unsafe: false,
                 exported: false,
+                link_name: None,
             })],
         ),
     };
@@ -499,6 +500,7 @@ fn format_context_formats_modules_without_global_state() {
             self_receiver: None,
             is_unsafe: false,
             exported: false,
+            link_name: None,
         })],
     );
 

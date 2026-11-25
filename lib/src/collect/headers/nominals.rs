@@ -254,6 +254,7 @@ pub(crate) fn build_extern_with_id(
         ret: hir_sig.ret,
         variadic: false,
         is_unsafe: sig.is_unsafe,
+        link_name: sig.link_name.clone(),
     };
     context.scope.define(ext.name.clone(), ext.fn_type(), false);
     ext

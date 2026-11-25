@@ -321,6 +321,7 @@ pub(crate) fn hir_extern_from_interface(ext: &ProductExternInterface) -> HirExte
         ret: ext.ret.clone(),
         variadic: ext.variadic,
         is_unsafe: ext.is_unsafe,
+        link_name: ext.link_name.clone(),
     }
 }
 
