@@ -25,6 +25,15 @@ struct Args {
     /// Do not inject a dependency-provided prelude.
     #[arg(long)]
     no_prelude: bool,
+
+    /// Analyze for this target triple (defaults to the host), so cfg blocks
+    /// and std match that platform.
+    #[arg(long, value_parser = parse_target)]
+    target: Option<String>,
+}
+
+fn parse_target(value: &str) -> std::result::Result<String, String> {
+    rock_lib::target::Target::parse(value).map(|target| target.triple)
 }
 
 fn parse_named_path(value: &str) -> std::result::Result<(String, PathBuf), String> {
@@ -41,6 +50,7 @@ fn parse_named_path(value: &str) -> std::result::Result<(String, PathBuf), Strin
 struct Settings {
     extern_artifacts: Vec<(String, PathBuf)>,
     no_prelude: bool,
+    target: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -270,12 +280,15 @@ impl Backend {
             (Some(project), _) => Ok(Some(project)),
             (None, Some(root)) => {
                 let path = path.clone();
+                let target = self.settings.target.clone();
                 blocking(move || {
-                    rock::project::resolve_analysis_project_for_source(&root, &path)
-                        .map(Some)
-                        .map_err(|error| {
-                            Diagnostics(vec![RockDiagnostic::for_project(error, root)])
-                        })
+                    rock::project::resolve_analysis_project_for_source(
+                        &root,
+                        &path,
+                        target.as_deref(),
+                    )
+                    .map(Some)
+                    .map_err(|error| Diagnostics(vec![RockDiagnostic::for_project(error, root)]))
                 })
                 .await
             }
@@ -614,6 +627,7 @@ fn analysis_config(
                 .map(|project| project.no_prelude)
                 .unwrap_or(!has_std),
         no_std: project.map(|project| project.no_std).unwrap_or(true),
+        target: settings.target.clone(),
         ..Config::default()
     }
 }
@@ -790,6 +804,7 @@ fn main() -> std::io::Result<()> {
     let settings = Settings {
         no_prelude: args.no_prelude,
         extern_artifacts: args.extern_artifacts,
+        target: args.target,
     };
     runtime()?.block_on(async move {
         let stdin = tokio::io::stdin();

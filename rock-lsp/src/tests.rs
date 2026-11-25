@@ -127,11 +127,13 @@ fn mixed_package_binary_entries_analyze_with_their_own_library() {
     let settings = Settings {
         extern_artifacts: Vec::new(),
         no_prelude: false,
+        target: None,
     };
     for entry in ["src/main.rk", "src/bin/other.rk"] {
         let path = root.join(entry);
         std::fs::write(&path, "> mixed::answer\nmain = -> answer!\n").unwrap();
-        let project = rock::project::resolve_analysis_project_for_source(&root, &path).unwrap();
+        let project =
+            rock::project::resolve_analysis_project_for_source(&root, &path, None).unwrap();
         assert_eq!(project.entry_file, path);
         assert!(project
             .extern_artifacts
@@ -166,6 +168,7 @@ fn runtime_analyzes_nested_source_on_blocking_worker() {
                 &Settings {
                     extern_artifacts: Vec::new(),
                     no_prelude: true,
+                    target: None,
                 },
                 None,
             );
@@ -197,6 +200,7 @@ fn inlay_type_hints_only_label_unannotated_bindings_in_range() {
         &Settings {
             extern_artifacts: Vec::new(),
             no_prelude: true,
+            target: None,
         },
         None,
     );
@@ -234,6 +238,7 @@ fn editing_an_open_module_updates_hints_in_an_unchanged_buffer() {
                 Settings {
                     extern_artifacts: Vec::new(),
                     no_prelude: true,
+                    target: None,
                 },
             )
         });
@@ -306,6 +311,7 @@ fn open_buffers_for_the_same_target_share_analysis() {
                 Settings {
                     extern_artifacts: Vec::new(),
                     no_prelude: true,
+                    target: None,
                 },
             )
         });
@@ -364,6 +370,7 @@ fn project_configuration_discovers_artifacts_and_applies_explicit_overrides() {
             ("extra".to_string(), PathBuf::from("/override/extra.rkca")),
         ],
         no_prelude: false,
+        target: None,
     };
 
     let config = analysis_config(
@@ -385,4 +392,32 @@ fn project_configuration_discovers_artifacts_and_applies_explicit_overrides() {
             ("std".to_string(), PathBuf::from("/toolchain/std.rkca")),
         ]
     );
+}
+
+#[test]
+fn analysis_follows_the_configured_target() {
+    let path = PathBuf::from("/virtual/main.rk");
+    // `main` calls an item only the Windows branch defines, so analysis
+    // succeeds only when the configured target selects that branch.
+    let text = "cfg(target_os = \"windows\")\n    answer = -> 0\n\nmain = -> answer!\n";
+    let analyze_for = |target: Option<&str>| {
+        let config = analysis_config(
+            path.clone(),
+            vec![rock_lib::SourceProvider::Virtual {
+                path: path.clone(),
+                text: text.to_string(),
+            }],
+            &Settings {
+                extern_artifacts: Vec::new(),
+                no_prelude: true,
+                target: target.map(str::to_string),
+            },
+            None,
+        );
+        assert_eq!(config.target.as_deref(), target);
+        rock_lib::analyze(&config)
+    };
+
+    assert!(analyze_for(Some("x86_64-pc-windows-msvc")).is_ok());
+    assert!(analyze_for(Some("x86_64-unknown-linux-gnu")).is_err());
 }

@@ -31,22 +31,27 @@ pub fn find_project_root(source_path: &Path) -> Option<PathBuf> {
 }
 
 pub fn resolve_analysis_project(project_root: &Path) -> Result<AnalysisProject, String> {
-    resolve_project(project_root, None)
+    resolve_project(project_root, None, None)
 }
 
 /// Select an explicitly declared entry when that entry is opened in the editor.
+/// Dependencies and std are resolved for `target_triple` (the host when
+/// `None`), so cfg-selected code matches that target.
 pub fn resolve_analysis_project_for_source(
     project_root: &Path,
     source_path: &Path,
+    target_triple: Option<&str>,
 ) -> Result<AnalysisProject, String> {
-    resolve_project(project_root, Some(source_path))
+    resolve_project(project_root, Some(source_path), target_triple)
 }
 
 fn resolve_project(
     project_root: &Path,
     source_path: Option<&Path>,
+    target_triple: Option<&str>,
 ) -> Result<AnalysisProject, String> {
     let mut package = Package::load(project_root.to_path_buf())?;
+    package.target_triple = target_triple.map(str::to_string);
     if let Some(source_path) = source_path {
         let source_path = source_path
             .canonicalize()
