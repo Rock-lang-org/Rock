@@ -54,13 +54,20 @@ pub(crate) fn package_requires_sysroot_std(package: &Package) -> bool {
         && !package_has_direct_std_dependency(package)
 }
 
-pub(crate) fn ensure_sysroot_std_available() -> Result<SysrootLayout, String> {
+/// The sysroot std for `target_triple` (the host when `None`), rebuilding a
+/// workspace dev std when it is stale.
+pub(crate) fn ensure_sysroot_std_available(
+    target_triple: Option<&str>,
+) -> Result<SysrootLayout, String> {
     let _guard = sysroot_std_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let resolution = current_sysroot_resolution()?;
-    let layout = resolution.clone().into_layout();
+    let layout = match target_triple {
+        Some(triple) => resolution.clone().into_layout_for(triple.to_string()),
+        None => resolution.clone().into_layout(),
+    };
 
     if resolution.is_explicit() {
         if sysroot_std_is_fresh(&layout, None)? {
@@ -86,8 +93,11 @@ pub(crate) fn ensure_sysroot_std_available() -> Result<SysrootLayout, String> {
 
     if !can_auto_rebuild_std(&resolution, workspace_std_root.as_deref()) {
         return Err(format!(
-            "Bundled std is missing from sysroot {} and no workspace std source is available",
-            layout.target_libdir.display()
+            "Bundled std for target '{}' is missing from sysroot {} and no workspace std source \
+             is available; package one with `rockup dev std package --target {}`",
+            layout.target_triple,
+            layout.target_libdir.display(),
+            layout.target_triple
         ));
     };
 

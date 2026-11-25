@@ -19,6 +19,7 @@ use crate::{
 
 pub(crate) struct ArtifactBuildState {
     profile: BuildProfile,
+    target_triple: Option<String>,
     lint_args: Vec<String>,
     project_root: PathBuf,
     artifacts: HashMap<PathBuf, PathBuf>,
@@ -32,6 +33,7 @@ impl ArtifactBuildState {
     pub(crate) fn new(package: &Package) -> Self {
         Self {
             profile: package.profile,
+            target_triple: package.target_triple.clone(),
             lint_args: package.lint_args.clone(),
             project_root: package.root_dir.clone(),
             artifacts: HashMap::new(),
@@ -103,14 +105,15 @@ pub(crate) fn collect_root_artifacts(
         .collect::<Vec<_>>();
 
     if package_requires_sysroot_std(package) {
-        let layout = ensure_sysroot_std_available()?;
+        let layout = ensure_sysroot_std_available(package.target_triple.as_deref())?;
         artifacts.push(ExternArtifact {
             name: STD_CRATE_NAME.to_string(),
             path: layout.std_artifact,
         });
     }
     if state.dependency_artifacts_use_std(&dependency_artifacts) {
-        let std_artifact = ensure_sysroot_std_available()?.std_artifact;
+        let std_artifact =
+            ensure_sysroot_std_available(package.target_triple.as_deref())?.std_artifact;
         if !artifacts
             .iter()
             .any(|artifact| artifact.path == std_artifact)
@@ -191,6 +194,7 @@ pub(crate) fn ensure_artifact(
         };
         package.target = library.clone();
         package.profile = state.profile;
+        package.target_triple = state.target_triple.clone();
         package.use_project_build(&state.project_root);
         // Like cargo, lints are reported for the project's own crate only.
         package.lint_args = if package.is_project_root() {
@@ -199,7 +203,11 @@ pub(crate) fn ensure_artifact(
             vec!["-A".to_string(), "unused".to_string()]
         };
         let mut implicit_artifact_inputs = if package_requires_sysroot_std(&package) {
-            vec![ensure_sysroot_std_available()?.std_artifact.clone()]
+            vec![
+                ensure_sysroot_std_available(package.target_triple.as_deref())?
+                    .std_artifact
+                    .clone(),
+            ]
         } else {
             Vec::new()
         };
@@ -229,7 +237,8 @@ pub(crate) fn ensure_artifact(
         dependency_artifacts.dedup();
 
         if dependencies_use_std {
-            let std_artifact = ensure_sysroot_std_available()?.std_artifact;
+            let std_artifact =
+                ensure_sysroot_std_available(package.target_triple.as_deref())?.std_artifact;
             if !implicit_artifact_inputs.contains(&std_artifact) {
                 implicit_artifact_inputs.push(std_artifact);
             }

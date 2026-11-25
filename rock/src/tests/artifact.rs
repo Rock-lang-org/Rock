@@ -148,8 +148,10 @@ fn test_changed_lint_levels_invalidate_cached_library() {
     );
     let lints = |flag: &str| vec![flag.to_string(), "unused".to_string()];
 
-    crate::build::build_project(&temp_dir, BuildProfile::Debug, lints("-A")).unwrap();
-    let error = crate::build::build_project(&temp_dir, BuildProfile::Debug, lints("-D"));
+    crate::build::build_project_for_target(&temp_dir, BuildProfile::Debug, lints("-A"), None)
+        .unwrap();
+    let error =
+        crate::build::build_project_for_target(&temp_dir, BuildProfile::Debug, lints("-D"), None);
     assert!(error.is_err(), "denied lints must rebuild a cached library");
 
     let _ = fs::remove_dir_all(temp_dir);

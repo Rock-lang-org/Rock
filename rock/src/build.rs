@@ -34,14 +34,21 @@ impl BuildProducts {
     }
 }
 
-pub(crate) fn build_project(
+/// Builds every target of the project for `target_triple`, or for the host
+/// when it is `None`. Foreign-target outputs go under `build/<triple>/`.
+pub(crate) fn build_project_for_target(
     project_root: &Path,
     profile: BuildProfile,
     lint_args: Vec<String>,
+    target_triple: Option<String>,
 ) -> Result<BuildProducts, String> {
     let mut package = Package::load(project_root.to_path_buf())?;
     package.profile = profile;
     package.lint_args = lint_args;
+    if let Some(triple) = &target_triple {
+        rock_shared::target::Target::parse(triple)?;
+    }
+    package.target_triple = target_triple;
     let binaries = package.manifest.binaries().cloned().collect::<Vec<_>>();
     build_targets(package, binaries)
 }
@@ -93,7 +100,11 @@ fn build_targets(
             )?;
             // rockc names its executable after the entry file. Isolate intermediate
             // products per target, then publish under the manifest's binary name.
-            let emitted = output_executable_path(&output_dir, &package.entry_file());
+            let emitted = output_executable_path(
+                &output_dir,
+                &package.entry_file(),
+                package.target().exe_suffix(),
+            );
             let path = package.executable_path(&name);
             fs::rename(&emitted, &path).map_err(|e| {
                 format!(

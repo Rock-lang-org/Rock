@@ -72,6 +72,9 @@ pub(crate) fn build_std_package_invocation(
             layout.std_object.clone().into_os_string(),
             "--emit-artifact".into(),
             layout.std_artifact.clone().into_os_string(),
+            // The component directory is per target, so the object must be too.
+            "--target".into(),
+            layout.target_triple.clone().into(),
         ],
     })
 }

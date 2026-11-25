@@ -42,3 +42,32 @@ fn test_manifest_text_cannot_escape_the_shared_build_directory() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn test_foreign_target_builds_use_their_own_tree_and_executable_suffix() {
+    let root = temp_test_dir("foreign_target_layout");
+    write_package(&root, "app", "lib.rk", &[], "< answer = -> 42\n");
+    let mut package = load_package(root.clone());
+    let host_dir = package.build_dir();
+    assert_eq!(host_dir, root.join("build/debug"));
+
+    package.target_triple = Some("x86_64-pc-windows-msvc".to_string());
+    assert_eq!(
+        package.build_dir(),
+        root.join("build/x86_64-pc-windows-msvc/debug")
+    );
+    assert!(package
+        .executable_path("tool")
+        .ends_with("x86_64-pc-windows-msvc/debug/tool.exe"));
+
+    let invocation =
+        crate::rockc::build_dependency_artifact_invocation("rockc".into(), &package, &[]);
+    let args: Vec<_> = invocation
+        .args
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let target = args.iter().position(|arg| arg == "--target").unwrap();
+    assert_eq!(args[target + 1], "x86_64-pc-windows-msvc");
+    fs::remove_dir_all(root).unwrap();
+}

@@ -41,6 +41,8 @@ pub(crate) struct Package {
     pub(crate) target: CrateTarget,
     /// `-A/-W/-D` arguments forwarded to rockc, in command-line order.
     pub(crate) lint_args: Vec<String>,
+    /// Target triple for cross builds; `None` builds for the host.
+    pub(crate) target_triple: Option<String>,
     build_root: PathBuf,
     dependency_key: Option<String>,
 }
@@ -66,6 +68,7 @@ impl Package {
             target,
             profile: BuildProfile::default(),
             lint_args: Vec::new(),
+            target_triple: None,
         })
     }
 
@@ -91,7 +94,13 @@ impl Package {
     }
 
     pub(crate) fn build_dir(&self) -> PathBuf {
-        let directory = self.build_root.join(self.profile.directory());
+        // Host builds keep `build/<profile>`; each foreign target gets its own
+        // tree so artifacts for different targets never mix.
+        let directory = match &self.target_triple {
+            Some(triple) => self.build_root.join(triple),
+            None => self.build_root.clone(),
+        }
+        .join(self.profile.directory());
         match &self.dependency_key {
             Some(key) => directory.join("deps").join(key),
             None => directory,
@@ -131,12 +140,17 @@ impl Package {
     }
 
     pub(crate) fn executable_path(&self, name: &str) -> PathBuf {
-        let filename = if cfg!(target_os = "windows") {
-            format!("{}.exe", name)
-        } else {
-            name.to_string()
-        };
+        let filename = format!("{}{}", name, self.target().exe_suffix());
         self.build_dir().join(filename)
+    }
+
+    /// The resolved compilation target (the host unless `target_triple` is set).
+    pub(crate) fn target(&self) -> rock_shared::target::Target {
+        match &self.target_triple {
+            Some(triple) => rock_shared::target::Target::parse(triple)
+                .unwrap_or_else(|_| rock_shared::target::Target::host()),
+            None => rock_shared::target::Target::host(),
+        }
     }
 }
 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::{
-    build::{build_project, run_project},
+    build::{build_project_for_target, run_project},
     commands::{clean_project, expand_project, format_project, new_project},
     package::BuildProfile,
     progress,
@@ -31,8 +31,15 @@ pub fn run() -> Result<CliOutcome, String> {
             progress::cleaned(clean_project(&current_project_root()?)?);
             Ok(CliOutcome::Success)
         }
-        Command::Build { profile, .. } => {
-            let products = build_project(&current_project_root()?, profile.selected(), lint_args)?;
+        Command::Build {
+            profile, target, ..
+        } => {
+            let products = build_project_for_target(
+                &current_project_root()?,
+                profile.selected(),
+                lint_args,
+                target,
+            )?;
             for path in products.paths() {
                 println!("{}", path.display());
             }
@@ -87,6 +94,10 @@ pub(crate) enum Command {
         profile: ProfileArgs,
         #[command(flatten)]
         lints: LintArgs,
+        /// Target triple to build for (defaults to the host), e.g.
+        /// aarch64-apple-darwin or x86_64-pc-windows-msvc
+        #[arg(long)]
+        target: Option<String>,
     },
     /// Build the crate and execute it if it is a binary
     Run {

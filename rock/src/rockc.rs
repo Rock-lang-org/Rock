@@ -52,6 +52,24 @@ pub(crate) fn resolve_rockc_path() -> Result<PathBuf, String> {
     process::dev_target_binary_from_current_exe("rockc")
 }
 
+/// Arguments every package compilation shares: std/prelude selection, lint
+/// overrides and the compilation target.
+fn common_package_args(mut invocation: RockcInvocation, package: &Package) -> RockcInvocation {
+    if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
+        invocation = invocation.arg("--no-std");
+    }
+    if package.manifest.crate_.no_std {
+        invocation = invocation.arg("--no-prelude");
+    }
+    for arg in &package.lint_args {
+        invocation = invocation.arg(arg);
+    }
+    if let Some(triple) = &package.target_triple {
+        invocation = invocation.arg("--target").arg(triple.clone());
+    }
+    invocation
+}
+
 pub(crate) fn build_dependency_artifact_invocation(
     executable: PathBuf,
     package: &Package,
@@ -85,15 +103,7 @@ pub(crate) fn build_dependency_artifact_invocation(
         .arg("--emit-artifact")
         .arg(package.artifact_path());
 
-    if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
-        invocation = invocation.arg("--no-std");
-    }
-    if package.manifest.crate_.no_std {
-        invocation = invocation.arg("--no-prelude");
-    }
-    for arg in &package.lint_args {
-        invocation = invocation.arg(arg);
-    }
+    invocation = common_package_args(invocation, package);
 
     for artifact in dependency_artifacts {
         invocation = invocation
@@ -119,15 +129,7 @@ pub(crate) fn build_root_invocation(
         .arg("--output-dir")
         .arg(package.binary_build_dir());
 
-    if package.manifest.crate_.no_std || package.manifest.crate_.name == STD_CRATE_NAME {
-        invocation = invocation.arg("--no-std");
-    }
-    if package.manifest.crate_.no_std {
-        invocation = invocation.arg("--no-prelude");
-    }
-    for arg in &package.lint_args {
-        invocation = invocation.arg(arg);
-    }
+    invocation = common_package_args(invocation, package);
 
     for artifact in artifacts {
         invocation = invocation

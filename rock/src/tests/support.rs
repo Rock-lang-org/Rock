@@ -159,7 +159,7 @@ pub(crate) fn build_project(
     root: &Path,
     profile: crate::package::BuildProfile,
 ) -> Result<PathBuf, String> {
-    let products = crate::build::build_project(root, profile, Vec::new())?;
+    let products = crate::build::build_project_for_target(root, profile, Vec::new(), None)?;
     let paths = products.paths().cloned().collect::<Vec<_>>();
     assert_eq!(
         paths.len(),
