@@ -2,10 +2,13 @@ name: Platforms
 
 # Builds the toolchain natively on macOS and Windows and runs the std
 # platform smoke program there. Linux is covered by the release workflow.
-# Manual for now: these runners and the LLVM download are slow, and the ports
-# are not yet qualified.
+# Manual or on the porting branch for now: these runners and the LLVM download
+# are slow, and the ports are not yet qualified. (workflow_dispatch only works
+# once this file is on the default branch.)
 on:
   workflow_dispatch:
+  push:
+    branches: [win_mac_compat]
 
 permissions:
   contents: read
