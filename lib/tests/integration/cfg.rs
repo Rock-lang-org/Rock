@@ -103,6 +103,37 @@ main = -> (c_abs (~IntWrappingSub (0 as I32), (42 as I32))) as I64
     assert_eq!(status, 42);
 }
 
+#[test]
+fn test_externs_sharing_a_symbol_must_agree_on_the_signature() {
+    compile_should_fail(
+        r#"
+extern "abs" abs_i32: I32 -> I32
+extern "abs" abs_i64: I64 -> I64
+
+main = !->
+    (abs_i32 (1 as I32)).println!
+    (abs_i64 1).println!
+"#,
+        "foreign symbol 'abs' is declared with conflicting signatures",
+    );
+}
+
+#[test]
+fn test_externs_sharing_a_symbol_with_one_signature_link_once() {
+    let status = compile_and_run_without_std(
+        r#"
+extern "abs" first_abs: I32 -> I32
+extern "abs" second_abs: I32 -> I32
+
+main = ->
+    zero = first_abs (0 as I32)
+    seven = second_abs (~IntWrappingSub (0 as I32), (7 as I32))
+    (~IntWrappingAdd zero, seven) as I64
+"#,
+    );
+    assert_eq!(status, 7);
+}
+
 // The same program runs natively on macOS and Windows in CI.
 #[test]
 fn test_platform_smoke_program_runs_on_the_host() {

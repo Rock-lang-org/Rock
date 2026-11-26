@@ -268,6 +268,21 @@ impl<'ctx> CodeGen<'ctx> {
         };
         let base_name = link_name.split("::").last().unwrap_or(link_name);
         let llvm_function = if let Some(existing) = self.module.get_function(base_name) {
+            // Several externs may name one symbol (e.g. through `extern "Sym"`),
+            // but they must agree: LLVM would otherwise call the foreign
+            // function with the first declaration's ABI.
+            if existing.get_type() != fn_type {
+                return Err(CodegenError::source_operation(format!(
+                    "foreign symbol '{}' is declared with conflicting signatures: {} and {}",
+                    base_name,
+                    existing.get_type().print_to_string(),
+                    fn_type.print_to_string()
+                ))
+                .with_note(
+                    "every extern that links to the same symbol must use the same parameter \
+                     and return types",
+                ));
+            }
             existing
         } else {
             self.module.add_function(base_name, fn_type, None)
