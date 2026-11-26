@@ -145,7 +145,7 @@ fn compile_with_products_records_canonical_extern_artifact_paths() {
 
     CompilerProducts {
         crate_identity: ProductCrateIdentity {
-            target_triple: Some(crate::target::Target::host().triple),
+            target_triple: Some(crate::target::Target::host().unwrap().triple),
             ..ProductCrateIdentity::local("dep".to_string())
         },
         identity_table: ProductIdentityTable {

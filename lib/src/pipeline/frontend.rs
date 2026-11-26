@@ -5,6 +5,7 @@ use crate::ast::debug::debug_ast;
 use crate::ast::{self, Program};
 use crate::crate_system::{load_extern_artifacts, validate_extern_artifact_names, CrateContext};
 use crate::diagnostic::{self, Diagnostics};
+use crate::target::Target;
 use crate::{analysis, collect, infer, lower, macro_expansion, products, source_loader};
 
 use super::{module_name_from_entry, Config, DebugPrint};
@@ -23,6 +24,7 @@ pub(super) struct FrontendOutput {
     pub(super) effective_current_crate_name: String,
     pub(super) exported_macros: Vec<products::ProductMacroExport>,
     pub(super) prelude_macros: BTreeMap<String, String>,
+    pub(super) target: Target,
 }
 
 pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagnostics> {
@@ -32,6 +34,11 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         .clone()
         .unwrap_or_else(|| module_name_from_entry(&config.entry_file));
 
+    let target = config.target().map_err(|message| {
+        let mut diagnostics = Diagnostics::default();
+        diagnostics.push(diagnostic::Diagnostic::for_toolchain(message));
+        diagnostics
+    })?;
     let mut ctx = CrateContext::new();
     validate_extern_artifact_names(config, &effective_current_crate_name)?;
     if let Err(diagnostic) = load_extern_artifacts(
@@ -42,7 +49,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
             .parent()
             .unwrap_or(&config.entry_file)
             .to_path_buf(),
-        &config.target().triple,
+        &target.triple,
     ) {
         let mut diagnostics = Diagnostics::default();
         diagnostics.push(diagnostic);
@@ -196,6 +203,7 @@ pub(super) fn compile_frontend(config: &Config) -> Result<FrontendOutput, Diagno
         effective_current_crate_name,
         exported_macros,
         prelude_macros,
+        target,
     })
 }
 

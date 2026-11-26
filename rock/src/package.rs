@@ -139,18 +139,15 @@ impl Package {
         }
     }
 
-    pub(crate) fn executable_path(&self, name: &str) -> PathBuf {
-        let filename = format!("{}{}", name, self.target().exe_suffix());
-        self.build_dir().join(filename)
+    pub(crate) fn executable_path(&self, name: &str) -> Result<PathBuf, String> {
+        let filename = format!("{}{}", name, self.target()?.exe_suffix());
+        Ok(self.build_dir().join(filename))
     }
 
-    /// The resolved compilation target (the host unless `target_triple` is set).
-    pub(crate) fn target(&self) -> rock_shared::target::Target {
-        match &self.target_triple {
-            Some(triple) => rock_shared::target::Target::parse(triple)
-                .unwrap_or_else(|_| rock_shared::target::Target::host()),
-            None => rock_shared::target::Target::host(),
-        }
+    /// The resolved compilation target (the host unless `target_triple` is
+    /// set); unsupported triples and hosts are errors.
+    pub(crate) fn target(&self) -> Result<rock_shared::target::Target, String> {
+        rock_shared::target::Target::resolve(self.target_triple.as_deref())
     }
 }
 

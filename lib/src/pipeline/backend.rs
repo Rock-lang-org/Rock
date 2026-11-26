@@ -58,6 +58,7 @@ fn compile_backend(
         effective_current_crate_name,
         exported_macros,
         prelude_macros,
+        target,
     } = frontend;
     let mut timer = super::timing::PhaseTimer::from_env();
     let crate_ctx = &ctx;
@@ -67,7 +68,7 @@ fn compile_backend(
     let mut current_crate_identity =
         ProductCrateIdentity::local(effective_current_crate_name.clone())
             .with_source_fingerprint(source_fingerprint.clone());
-    current_crate_identity.target_triple = Some(config.target().triple);
+    current_crate_identity.target_triple = Some(target.triple.clone());
     let compilation_identity = mono::CompilationIdentityContext::new(
         hir.root_crate_id,
         current_crate_identity.clone(),
@@ -167,7 +168,6 @@ fn compile_backend(
     let mut codegen =
         codegen::CodeGen::new_with_symbol_namespace(&context, &module_name, symbol_namespace);
     codegen.set_type_context(mir_program.type_context.clone());
-    let target = config.target();
     if let Err(e) = codegen.configure_target(&target) {
         let mut diagnostics = Diagnostics::default();
         diagnostics.push(e.into_diagnostic());

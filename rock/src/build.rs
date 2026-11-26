@@ -104,9 +104,9 @@ fn build_targets(
             let emitted = output_executable_path(
                 &output_dir,
                 &package.entry_file(),
-                package.target().exe_suffix(),
+                package.target()?.exe_suffix(),
             );
-            let path = package.executable_path(&name);
+            let path = package.executable_path(&name)?;
             fs::rename(&emitted, &path).map_err(|e| {
                 format!(
                     "Failed to publish binary '{}' at {}: {}",

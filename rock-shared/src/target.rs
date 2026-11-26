@@ -73,11 +73,26 @@ impl Target {
         })
     }
 
-    /// The machine running the compiler; falls back to the Linux baseline
-    /// when the host is not a supported target.
-    pub fn host() -> Self {
-        Self::parse(&crate::sysroot::host_target_triple())
-            .unwrap_or_else(|_| Self::parse("x86_64-unknown-linux-gnu").expect("baseline target"))
+    /// The machine running the compiler. An unsupported host is an error, not
+    /// a silent fallback to another platform's std and codegen.
+    pub fn host() -> Result<Self, String> {
+        let triple = crate::sysroot::host_target_triple();
+        Self::parse(&triple).map_err(|_| {
+            format!(
+                "the host '{}' is not a supported target; pass --target with one of: \
+                 x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu, aarch64-apple-darwin, \
+                 x86_64-apple-darwin, x86_64-pc-windows-msvc",
+                triple
+            )
+        })
+    }
+
+    /// Resolves an optional explicit triple, defaulting to the host.
+    pub fn resolve(triple: Option<&str>) -> Result<Self, String> {
+        match triple {
+            Some(triple) => Self::parse(triple),
+            None => Self::host(),
+        }
     }
 
     pub fn os_name(&self) -> &'static str {
@@ -129,7 +144,7 @@ impl Target {
     }
 
     pub fn is_host(&self) -> bool {
-        *self == Self::host()
+        Self::host().is_ok_and(|host| *self == host)
     }
 }
 

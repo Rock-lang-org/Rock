@@ -107,7 +107,11 @@ fn cfg_block(stream: Input) -> IResult<Vec<TopLevel>> {
     }
     let (stream, _) = empty_lines(stream)?;
 
-    let items = if predicate.eval(&stream.config.target()) {
+    let target = stream
+        .config
+        .target()
+        .map_err(|message| hard(message, head.span))?;
+    let items = if predicate.eval(&target) {
         groups.into_iter().flatten().collect()
     } else {
         Vec::new()

@@ -83,12 +83,9 @@ impl Config {
         self.debug_print.contains(&name)
     }
 
-    /// The resolved compilation target. CLIs validate explicit triples before
-    /// building a config, so an invalid one here falls back to the host.
-    pub fn target(&self) -> Target {
-        self.target
-            .as_deref()
-            .and_then(|triple| Target::parse(triple).ok())
-            .unwrap_or_else(Target::host)
+    /// The resolved compilation target: the explicit triple, else the host.
+    /// Unsupported triples and hosts are errors, never a silent fallback.
+    pub fn target(&self) -> Result<Target, String> {
+        Target::resolve(self.target.as_deref())
     }
 }

@@ -169,7 +169,7 @@ fn linker_invocation(
             "cannot link for target '{}' on host '{}': set {} to a linker driver for that \
              target, or pass --no-link to emit an object file",
             target.triple,
-            Target::host().triple,
+            crate::sysroot::host_target_triple(),
             LINKER_ENV
         )));
     }

@@ -58,6 +58,7 @@ fn test_foreign_target_builds_use_their_own_tree_and_executable_suffix() {
     );
     assert!(package
         .executable_path("tool")
+        .unwrap()
         .ends_with("x86_64-pc-windows-msvc/debug/tool.exe"));
 
     let invocation =

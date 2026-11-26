@@ -282,12 +282,7 @@ impl Config {
 
     /// The selected target, rejecting unsupported triples up front.
     fn resolved_target(&self) -> Result<rock_lib::target::Target, Diagnostics> {
-        match &self.target {
-            Some(triple) => {
-                rock_lib::target::Target::parse(triple).map_err(diagnostics_from_message)
-            }
-            None => Ok(rock_lib::target::Target::host()),
-        }
+        rock_lib::target::Target::resolve(self.target.as_deref()).map_err(diagnostics_from_message)
     }
 }
 
