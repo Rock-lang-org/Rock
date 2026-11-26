@@ -66,6 +66,7 @@ cfg(target_family = "unix")
     < extern shutdown: I32 -> I32 -> I32
     < extern close: I32 -> I32
     < extern getsockname: I32 -> *U8 -> *I32 -> I32
+    < extern setsockopt: I32 -> I32 -> I32 -> *U8 -> I32 -> I32
     < extern htons: U16 -> U16
     < extern ntohs: U16 -> U16
     < extern htonl: U32 -> U32
@@ -95,8 +96,10 @@ cfg(target_os = "linux")
     < extern __errno_location: () -> *I32
 
 cfg(target_os = "macos")
-    // Variadic in C; arm64 Darwin needs the mode on the stack, so this
-    // binding omits it and is only valid without O_CREAT.
-    < extern open: *U8 -> I32 -> I32
-    < extern creat: *U8 -> I32 -> I32
+    // open is variadic in C, but Rock externs are fixed-arity. This binding
+    // puts the mode where both Darwin ABIs read the first variadic argument:
+    // the third integer register on x86-64, and the first 8-byte stack slot
+    // (the ninth integer argument) on arm64. Arguments four to eight are
+    // padding. Pass the mode in both the third and ninth positions.
+    < extern open: *U8 -> I32 -> I64 -> I64 -> I64 -> I64 -> I64 -> I64 -> I64 -> I32
     < extern __error: () -> *I32

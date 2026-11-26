@@ -24,6 +24,24 @@
 > std::sys::errno_location
 > std::sys::eintr
 > std::sys::msg_nosignal
+> std::sys::sock_prepare
+
+extern __rock_runtime_arg_count: () -> I64
+extern __rock_runtime_arg_at: I64 -> *U8
+
+// ---- Program arguments ----------------------------------------------------
+
+// argv from the C entry point, already the platform's byte strings.
+arg_count: () -> I64
+< arg_count = -> __rock_runtime_arg_count!
+
+// A NUL-terminated argument, valid until arg_release.
+arg_at: I64 -> *U8
+< arg_at = index -> __rock_runtime_arg_at index
+
+arg_release: *U8 -> ()
+< arg_release = _ptr ->
+    return
 
 // ---- Number formatting --------------------------------------------------
 
@@ -49,9 +67,23 @@ fd_close: I32 -> I32
 sock_last_error: () -> I32
 < sock_last_error = -> unsafe *(errno_location!)
 
+// Applies the backend's per-socket setup to a new handle, closing it and
+// keeping the setup error when that fails.
+prepared: I64 -> I64
+prepared = sock ->
+    if sock < 0
+        sock
+    else if (sock_prepare sock) != (0 as I32)
+        error = unsafe *(errno_location!)
+        close (sock as I32)
+        unsafe *(errno_location!) = error
+        0 - 1
+    else
+        sock
+
 // An IPv4 stream socket, or -1.
 sock_open: () -> I64
-< sock_open = -> (socket (2 as I32), (1 as I32), (0 as I32)) as I64
+< sock_open = -> prepared ((socket (2 as I32), (1 as I32), (0 as I32)) as I64)
 
 sock_bind: I64 -> *U8 -> I32 -> I32
 < sock_bind = sock, addr, len -> bind (sock as I32), addr, len
@@ -60,7 +92,7 @@ sock_listen: I64 -> I32 -> I32
 < sock_listen = sock, backlog -> listen (sock as I32), backlog
 
 sock_accept: I64 -> *U8 -> *I32 -> I64
-< sock_accept = sock, addr, len -> (accept (sock as I32), addr, len) as I64
+< sock_accept = sock, addr, len -> prepared ((accept (sock as I32), addr, len) as I64)
 
 sock_connect: I64 -> *U8 -> I32 -> I32
 < sock_connect = sock, addr, len -> connect (sock as I32), addr, len

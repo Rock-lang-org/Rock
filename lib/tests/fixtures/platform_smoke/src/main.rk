@@ -13,6 +13,7 @@
 > std::concurrency::thread::sleep_ms
 > std::control::Result
 > std::env::args
+> std::collections::vec::Vec
 
 // Non-ASCII file name: exercises UTF-8 to native path conversion.
 file_name = -> "smoke-ünïcødé-é.txt"
@@ -26,6 +27,13 @@ write_then_append = ->
     written = appended.write_str "-second"?
     Result::Ok written
 
+append_new: () -> Result I64, IoError
+append_new = ->
+    mut file = File::append "smoke-append-new.txt"?
+    written = file.write_str "fresh"?
+    file.close!?
+    Result::Ok written
+
 loopback: () -> Result I64, IoError
 loopback = ->
     listener = TcpListener::bind (SocketAddrV4::localhost 0)?
@@ -34,17 +42,48 @@ loopback = ->
     mut server = listener.accept!?
     client.write_str "ping"?
     client.shutdown_write!?
-    mut buf = [0 as U8, 0, 0, 0]
-    read = server.read (&mut buf)?
-    if read == 4 && buf[0] == (112 as U8) && buf[3] == (103 as U8)
-        Result::Ok read
+    // A blocking read may return fewer bytes than were sent: read to EOF.
+    mut received: Vec U8 = Vec::new!
+    mut chunk = [0 as U8, 0, 0, 0]
+    done = false
+    while !done && received.len! < 8
+        count = server.read (&mut chunk)?
+        if count == 0
+            done = true
+        else
+            received.extend_from_slice (&chunk[..count])
+    if received.len! == 4 && received[0] == (112 as U8) && received[1] == (105 as U8) && received[2] == (110 as U8) && received[3] == (103 as U8)
+        Result::Ok received.len!
     else
         Result::Ok 0
 
+// Writing to a peer that has closed must report an error, not kill the
+// process (SIGPIPE on Unix).
+closed_peer_write: () -> Result Bool, IoError
+closed_peer_write = ->
+    listener = TcpListener::bind (SocketAddrV4::localhost 0)?
+    addr = listener.local_addr!?
+    mut client = TcpStream::connect addr?
+    server = listener.accept!?
+    server.close!?
+    failed = false
+    attempts = 0
+    // The first writes may succeed until the peer's reset arrives.
+    while !failed && attempts < 100
+        match client.write_str "x"
+            Result::Ok _ => sleep_ms 10
+            Result::Err _ => failed = true
+        attempts = attempts + 1
+    Result::Ok failed
+
 main = ->
-    // Arguments: argv[0] is always present.
-    if args!.len! < 1
+    // Arguments: the harness passes one non-ASCII argument, which must
+    // arrive as UTF-8 on every platform.
+    arguments = args!
+    if arguments.len! != 2
         return 10
+    if arguments[1] != "café-ü"
+        return 11
 
     // Files: create, close, append, read back.
     match write_then_append!
@@ -56,6 +95,16 @@ main = ->
                 return 21
         Result::Err _ => return 22
 
+    // Append creates a missing file without truncating anything.
+    match append_new!
+        Result::Ok 5 => ()
+        _ => return 23
+    match read_to_string "smoke-append-new.txt"
+        Result::Ok text =>
+            if text != "fresh"
+                return 24
+        Result::Err _ => return 25
+
     // A missing file reports an OS error rather than crashing.
     match File::open "definitely-missing-file.txt"
         Result::Err (IoError::Os _) => ()
@@ -65,6 +114,9 @@ main = ->
     match loopback!
         Result::Ok 4 => ()
         _ => return 40
+    match closed_peer_write!
+        Result::Ok true => ()
+        _ => return 41
 
     // Threads: spawn, sleep inside the thread, join with a value.
     match spawn (->

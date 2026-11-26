@@ -111,3 +111,15 @@ fn cfg_name_stays_usable_as_an_identifier() {
     let items = parse_for("x86_64-unknown-linux-gnu", "cfg = -> 1\n").unwrap();
     assert_eq!(item_names(&items), ["cfg"]);
 }
+
+#[test]
+fn source_has_cfg_block_matches_every_spelling_the_parser_accepts() {
+    use crate::parser::source_has_cfg_block;
+    let head = "cfg(target_os = \"linux\")\n    a = -> 1\n";
+    let spaced = "b = -> 2\ncfg (target_os = \"linux\")\n    a = -> 1\n";
+    let nested = "mod m\n    cfg  (target_os = \"linux\")\n        a = -> 1\n";
+    assert!(source_has_cfg_block(head));
+    assert!(source_has_cfg_block(spaced));
+    assert!(source_has_cfg_block(nested));
+    assert!(!source_has_cfg_block("cfg_value = -> 1\n// cfg(x)\n"));
+}

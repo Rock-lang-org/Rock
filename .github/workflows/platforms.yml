@@ -77,7 +77,7 @@ jobs:
           rm -rf "$work"
           cp -R lib/tests/fixtures/platform_smoke "$work"
           cd "$work"
-          "$GITHUB_WORKSPACE/target/release/rock" run --release -- first-arg
+          "$GITHUB_WORKSPACE/target/release/rock" run --release -- café-ü
 
       - name: Shared crate tests
         run: cargo test --locked --release -p rock-shared

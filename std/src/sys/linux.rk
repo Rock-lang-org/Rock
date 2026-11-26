@@ -31,6 +31,10 @@ open_file: *U8 -> I32 -> I32
 msg_nosignal: () -> I32
 < msg_nosignal = -> 16384 as I32
 
+// MSG_NOSIGNAL already covers SIGPIPE; sockets need no setup.
+sock_prepare: I64 -> I32
+< sock_prepare = _sock -> 0 as I32
+
 // struct sockaddr_in starts with a 16-bit sa_family_t.
 sockaddr_v4_set_family: *U8 -> ()
 < sockaddr_v4_set_family = buf ->

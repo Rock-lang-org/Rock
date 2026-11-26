@@ -1,11 +1,8 @@
 // macOS (Darwin libSystem) backend for std::sys.
 
-> std::ffi::libc::close
-// Darwin's open is variadic and arm64 passes variadic arguments on the stack,
-// so it is only ever called without the mode argument; creation goes through
-// creat, which takes the mode as a fixed argument.
+// See std::ffi::libc for how this fixed-arity binding passes open's mode.
 > std::ffi::libc::open
-> std::ffi::libc::creat
+> std::ffi::libc::setsockopt
 > std::ffi::libc::__error
 
 errno_location: () -> *I32
@@ -25,36 +22,26 @@ o_append: () -> I32
 eintr: () -> I32
 < eintr = -> 4 as I32
 
-enoent = -> 2 as I32
-
 // 0666, narrowed by the process umask.
-default_mode = -> 438 as I32
+default_mode = -> 438 as I64
 
-// std opens only read, create-truncate and create-append. creat(2) is exactly
-// O_WRONLY | O_CREAT | O_TRUNC. Append first opens an existing file; when it
-// is missing, creat makes it (empty) and the append open is retried.
+// One open call, so O_CREAT | O_APPEND creates atomically and never
+// truncates a file another process created meanwhile.
 open_file: *U8 -> I32 -> I32
 < open_file = path, flags ->
-    if (flags & (o_creat!)) == (0 as I32)
-        open path, flags
-    else if (flags & (o_trunc!)) != (0 as I32)
-        creat path, default_mode!
-    else
-        plain = flags - (o_creat!)
-        fd = open path, plain
-        if fd >= (0 as I32) || (unsafe *(__error!)) != (enoent!)
-            fd
-        else
-            created = creat path, default_mode!
-            if created < (0 as I32)
-                created
-            else
-                close created
-                open path, plain
+    mode = default_mode!
+    open path, flags, mode, 0, 0, 0, 0, 0, mode
 
-// Darwin has no MSG_NOSIGNAL; broken pipes are reported via SIGPIPE.
+// Darwin has no MSG_NOSIGNAL; SO_NOSIGPIPE on each socket makes writes to a
+// closed peer fail with EPIPE instead of raising SIGPIPE.
 msg_nosignal: () -> I32
 < msg_nosignal = -> 0 as I32
+
+sock_prepare: I64 -> I32
+< sock_prepare = sock ->
+    mut enabled = 1 as I32
+    // SOL_SOCKET, SO_NOSIGPIPE
+    setsockopt (sock as I32), (65535 as I32), (4130 as I32), ((&mut enabled) as *U8), (4 as I32)
 
 // struct sockaddr_in starts with an 8-bit length and an 8-bit family.
 sockaddr_v4_set_family: *U8 -> ()

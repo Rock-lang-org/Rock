@@ -62,6 +62,27 @@ fn is_cfg_head(stream: Input) -> bool {
     matches!(rest.consume(), Ok((_, next)) if next.token_type == TokenType::OpenParen)
 }
 
+/// Whether `source` contains a cfg block head, recognized the way the parser
+/// does: a `cfg` identifier starting a line, followed by `(` with any spacing.
+/// Unlexable source reports `false`; parsing it fails on its own.
+pub fn source_has_cfg_block(source: &str) -> bool {
+    let Ok(tokens) =
+        crate::lexer::Lexer::new(Default::default(), source).and_then(|mut lexer| lexer.collect())
+    else {
+        return false;
+    };
+    tokens.windows(3).any(|window| {
+        matches!(window[0].token_type, TokenType::Indent(_))
+            && window[1].token_type == TokenType::Ident("cfg".to_string())
+            && window[2].token_type == TokenType::OpenParen
+    }) || matches!(
+        tokens.as_slice(),
+        [first, second, ..]
+            if first.token_type == TokenType::Ident("cfg".to_string())
+                && second.token_type == TokenType::OpenParen
+    )
+}
+
 fn hard(message: impl Into<String>, span: Span) -> ParseError {
     ParseError::HardError(message.into(), span)
 }

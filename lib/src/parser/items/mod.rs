@@ -29,6 +29,7 @@ mod utils;
 mod tests;
 
 pub use array::*;
+pub use cfg::source_has_cfg_block;
 pub use block::*;
 pub use do_expr::do_expression;
 pub use enum_decl::*;

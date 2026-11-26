@@ -195,7 +195,7 @@ fn linker_invocation(
             LinkerInvocation {
                 program: override_linker.unwrap_or_else(|| "link.exe".into()),
                 leading: vec!["/NOLOGO".into(), out, "/SUBSYSTEM:CONSOLE".into()],
-                trailing: os_args(&["libcmt.lib", "ws2_32.lib", "kernel32.lib"]),
+                trailing: os_args(&["libcmt.lib", "ws2_32.lib", "kernel32.lib", "shell32.lib"]),
             }
         }
     };

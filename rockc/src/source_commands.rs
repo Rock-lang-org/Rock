@@ -40,6 +40,7 @@ pub(super) fn format_config(config: Config) -> Result<(), Diagnostics> {
         .ok_or_else(|| diagnostics_from_message("Missing required --entry-file for --format"))?;
     let rockc_config = rock_lib::Config {
         entry_file,
+        target: config.target.clone(),
         ..rock_lib::Config::default()
     };
 
@@ -53,8 +54,10 @@ pub(super) fn expand_config(config: Config) -> Result<(), Diagnostics> {
     let entry_file = config
         .entry_file
         .ok_or_else(|| diagnostics_from_message("Missing required --entry-file for --expand"))?;
+    // cfg selection follows the requested target, as in a real build.
     let rockc_config = rock_lib::Config {
         entry_file,
+        target: config.target.clone(),
         ..rock_lib::Config::default()
     };
 
@@ -93,10 +96,7 @@ impl<'a> Visitor<'a> for AstFormatter {
 
             // The parsed module holds only the active cfg branch; rewriting it
             // would delete every other target's code.
-            if source
-                .lines()
-                .any(|line| line.trim_start().starts_with("cfg("))
-            {
+            if rock_lib::parser::source_has_cfg_block(&source) {
                 self.result = Err(diagnostics_from_message(format!(
                     "Refusing to format {}: it contains cfg blocks, which the formatter \
                      does not preserve yet",

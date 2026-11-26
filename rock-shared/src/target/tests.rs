@@ -44,6 +44,11 @@ fn normalizes_triple_aliases() {
 fn rejects_unsupported_triples() {
     assert!(Target::parse("x86_64-pc-windows-gnu").is_err());
     assert!(Target::parse("wasm32-unknown-unknown").is_err());
+    assert!(Target::parse("aarch64-pc-windows-msvc").is_err());
+    assert!(Target::parse("aarch64-apple-darwin-invalid").is_err());
+    assert!(Target::parse("aarch64-apple-darwininvalid").is_err());
+    assert!(Target::parse("aarch64-apple-darwin23.").is_err());
+    assert!(Target::parse("x86_64-apple-macos").is_ok());
 }
 
 #[test]

@@ -54,12 +54,29 @@ fn test_cfg_selects_the_active_backend_module() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let dir = test_temp_dir(id);
     let _cleanup = TestDirCleanup(dir.clone());
-    let entry = write_project(&dir);
+    // Executes the result, so it must build for the host; each OS branch
+    // has a backend file and only the host's may be loaded.
+    fs::create_dir_all(&dir).unwrap();
+    let mut main = String::new();
+    for (os, value) in [("linux", 42), ("macos", 42), ("windows", 42)] {
+        fs::write(
+            dir.join(format!("backend_{os}.rk")),
+            format!("< value = -> {value}\n"),
+        )
+        .unwrap();
+        main.push_str(&format!(
+            "cfg(target_os = \"{os}\")\n    mod backend_{os}\n    > backend_{os}::value\n\n"
+        ));
+    }
+    main.push_str("main = -> value!\n");
+    let entry = dir.join("main.rk");
+    fs::write(&entry, main).unwrap();
 
-    let mut config = no_std_config(entry, &dir, "x86_64-unknown-linux-gnu");
+    let host = rock_lib::target::Target::host().unwrap();
+    let mut config = no_std_config(entry, &dir, &host.triple);
     config.no_link = false;
-    rock_lib::compile(&config).expect("linux selection should compile");
-    let mut command = Command::new(dir.join("build/main"));
+    rock_lib::compile(&config).expect("host selection should compile");
+    let mut command = Command::new(dir.join(format!("build/main{}", host.exe_suffix())));
     assert_eq!(run_test_command(&mut command).status.code(), Some(42));
 }
 
@@ -143,7 +160,7 @@ fn test_platform_smoke_program_runs_on_the_host() {
     let source =
         fs::read_to_string(workspace_root().join("lib/tests/fixtures/platform_smoke/src/main.rk"))
             .unwrap();
-    let output = compile_and_run_in_working_dir(&source, &dir);
+    let output = compile_and_run_in_working_dir_with_args(&source, &dir, &["café-ü"]);
     assert!(
         output.status.success(),
         "smoke failed with {:?}\nstdout:\n{}\nstderr:\n{}",

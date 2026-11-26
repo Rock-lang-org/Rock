@@ -8,6 +8,7 @@
 
 > std::ffi::libc::malloc
 > std::ffi::libc::free
+> std::ffi::libc::exit
 
 // C runtime
 extern _errno: () -> *I32
@@ -27,6 +28,12 @@ extern "GetLastError" get_last_error: () -> U32
 extern "GetCurrentThreadId" get_current_thread_id: () -> U32
 extern "SwitchToThread" switch_to_thread: () -> I32
 extern "Sleep" sleep: U32 -> ()
+extern "WideCharToMultiByte" wide_char_to_multi_byte: U32 -> U32 -> *U16 -> I32 -> *U8 -> I32 -> *U8 -> *I32 -> I32
+extern "GetCommandLineW" get_command_line_w: () -> *U16
+extern "LocalFree" local_free: *U8 -> *U8
+
+// shell32
+extern "CommandLineToArgvW" command_line_to_argv_w: *U16 -> *I32 -> *U64
 
 // ws2_32
 extern "WSAStartup" wsa_startup: U16 -> *U8 -> I32
@@ -93,6 +100,60 @@ open_file: *U8 -> I32 -> I32
             free (wide as *U8)
             unsafe *(_errno!) = error
             fd
+
+// ---- Program arguments ----------------------------------------------------
+// The CRT's narrow argv uses the ANSI code page; the wide command line keeps
+// every argument intact, converted here to UTF-8.
+
+arg_count: () -> I64
+< arg_count = ->
+    mut count = 0 as I32
+    count_ptr = (&mut count) as *I32
+    argv = command_line_to_argv_w get_command_line_w!, count_ptr
+    if (argv as I64) == 0
+        0
+    else
+        local_free (argv as *U8)
+        (unsafe *count_ptr) as I64
+
+// A NUL-terminated UTF-16 string as a malloc'd UTF-8 copy; null becomes the
+// empty string. Unpaired surrogates become U+FFFD.
+utf8_copy: *U16 -> *U8
+utf8_copy = wide ->
+    no_bytes = 0 as *U8
+    minus_one = (0 as I32) - (1 as I32)
+    bytes = if (wide as I64) == 0
+        0 as I32
+    else
+        wide_char_to_multi_byte cp_utf8!, (0 as U32), wide, minus_one, no_bytes, (0 as I32), no_bytes, (0 as *I32)
+    // A positive count includes the terminator.
+    size = if bytes > (0 as I32) then bytes as I64 else 1
+    out = malloc size
+    if (out as I64) == 0
+        exit (1 as I32)
+    unsafe *out = 0 as U8
+    if bytes > (0 as I32)
+        wide_char_to_multi_byte cp_utf8!, (0 as U32), wide, minus_one, out, bytes, no_bytes, (0 as *I32)
+    out
+
+// Argument `index` as NUL-terminated UTF-8, valid until arg_release.
+arg_at: I64 -> *U8
+< arg_at = index ->
+    mut count = 0 as I32
+    count_ptr = (&mut count) as *I32
+    argv = command_line_to_argv_w get_command_line_w!, count_ptr
+    out = if (argv as I64) == 0 || index < 0 || index >= ((unsafe *count_ptr) as I64)
+        utf8_copy (0 as *U16)
+    else
+        utf8_copy ((unsafe argv[index]) as *U16)
+    if (argv as I64) != 0
+        local_free (argv as *U8)
+    out
+
+arg_release: *U8 -> ()
+< arg_release = ptr ->
+    free ptr
+    return
 
 // ---- Number formatting ----------------------------------------------------
 

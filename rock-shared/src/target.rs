@@ -55,10 +55,11 @@ impl Target {
                 "gnu",
                 format!("{}-unknown-linux-gnu", arch),
             ),
-            [_, "apple", os] if os.starts_with("darwin") || os.starts_with("macos") => {
+            [_, "apple", os] if is_darwin_os(os) => {
                 (TargetOs::MacOs, "", format!("{}-apple-darwin", arch))
             }
-            [_, _, "windows", "msvc"] => (
+            // Only x64 Windows has a std backend and linker setup.
+            [_, _, "windows", "msvc"] if arch == "x86_64" => (
                 TargetOs::Windows,
                 "msvc",
                 format!("{}-pc-windows-msvc", arch),
@@ -145,6 +146,21 @@ impl Target {
 
     pub fn is_host(&self) -> bool {
         Self::host().is_ok_and(|host| *self == host)
+    }
+}
+
+/// `darwin`, `macos` or `macosx`, optionally followed by a dotted numeric
+/// version such as `darwin23.4.0` or `macosx14.0`.
+fn is_darwin_os(os: &str) -> bool {
+    let version = ["darwin", "macosx", "macos"]
+        .iter()
+        .find_map(|name| os.strip_prefix(name));
+    match version {
+        Some("") => true,
+        Some(version) => version
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit())),
+        None => false,
     }
 }
 

@@ -657,6 +657,14 @@ pub(crate) fn compile_and_run_with_status(source: &str) -> (String, bool) {
 }
 
 pub(crate) fn compile_and_run_in_working_dir(source: &str, dir: &Path) -> Output {
+    compile_and_run_in_working_dir_with_args(source, dir, &[])
+}
+
+pub(crate) fn compile_and_run_in_working_dir_with_args(
+    source: &str,
+    dir: &Path,
+    args: &[&str],
+) -> Output {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     fs::create_dir_all(dir).unwrap();
 
@@ -667,7 +675,7 @@ pub(crate) fn compile_and_run_in_working_dir(source: &str, dir: &Path) -> Output
     rock_lib::compile(&config).expect("Compilation failed");
 
     let mut command = Command::new(dir.join(format!("test_{id}")));
-    command.current_dir(dir);
+    command.current_dir(dir).args(args);
     run_test_command(&mut command)
 }
 

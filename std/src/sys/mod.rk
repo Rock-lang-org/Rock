@@ -13,6 +13,8 @@
 //   sockaddr_v4_set_family: *U8 -> ()  family header of struct sockaddr_in
 //   thread_*, sleep_ms                 OS threads and sleeping
 //   gcvt: F64 -> I32 -> *U8 -> *U8     C %g float formatting
+//   arg_count, arg_at, arg_release     program arguments as UTF-8 C strings
+//   sock_prepare (Unix only)           per-socket setup such as SO_NOSIGPIPE
 
 cfg(target_family = "unix")
     mod posix
@@ -37,6 +39,9 @@ cfg(target_family = "unix")
     < posix::thread_current_id
     < posix::thread_yield
     < posix::sleep_ms
+    < posix::arg_count
+    < posix::arg_at
+    < posix::arg_release
 
 cfg(target_os = "linux")
     mod linux
@@ -49,6 +54,7 @@ cfg(target_os = "linux")
     < linux::o_append
     < linux::eintr
     < linux::msg_nosignal
+    < linux::sock_prepare
     < linux::sockaddr_v4_set_family
 
 cfg(target_os = "macos")
@@ -62,6 +68,7 @@ cfg(target_os = "macos")
     < macos::o_append
     < macos::eintr
     < macos::msg_nosignal
+    < macos::sock_prepare
     < macos::sockaddr_v4_set_family
 
 cfg(target_os = "windows")
@@ -96,3 +103,6 @@ cfg(target_os = "windows")
     < windows::thread_current_id
     < windows::thread_yield
     < windows::sleep_ms
+    < windows::arg_count
+    < windows::arg_at
+    < windows::arg_release
