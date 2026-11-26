@@ -162,9 +162,9 @@ invariant.
 The shipped FFI-backed std assumes POSIX APIs. Its operating-system details
 (errno access, `open` flags, socket address layout) live in a private backend
 selected with [`cfg` blocks](../programs/modules.md#target-specific-modules-with-cfg);
-Linux is the tested target. macOS (POSIX) and Windows (C runtime, Winsock and
-Win32 threads) have backends that compile but are not yet qualified on native
-machines. Raw `std::ffi::libc` bindings whose C signature differs between
+Linux, macOS (POSIX) and Windows (C runtime, Winsock and Win32 threads) each
+have a backend. All three pass the std platform smoke program on native
+machines, but only Linux runs the full test suite and ships release binaries. Raw `std::ffi::libc` bindings whose C signature differs between
 targets, such as the POSIX socket and thread functions, `open`, `atol` and
 `__errno_location`, exist only on the targets where their signature is known. Put your own foreign declarations
 in `cfg`-selected modules the same way, and isolate them behind portable APIs. A
