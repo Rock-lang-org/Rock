@@ -79,5 +79,5 @@ jobs:
           cd "$work"
           "$GITHUB_WORKSPACE/target/release/rock" run --release -- café-ü
 
-      - name: Shared crate tests
-        run: cargo test --locked --release -p rock-shared
+      - name: Full test suite
+        run: cargo test --locked --workspace --release --no-fail-fast
