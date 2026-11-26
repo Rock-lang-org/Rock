@@ -31,6 +31,8 @@ extern "Sleep" sleep: U32 -> ()
 // ws2_32
 extern "WSAStartup" wsa_startup: U16 -> *U8 -> I32
 extern "WSAGetLastError" wsa_get_last_error: () -> I32
+extern "WSACleanup" wsa_cleanup: () -> I32
+extern "WSASetLastError" wsa_set_last_error: I32 -> ()
 extern socket: I32 -> I32 -> I32 -> U64
 extern bind: U64 -> *U8 -> I32 -> I32
 extern listen: U64 -> I32 -> I32
@@ -136,16 +138,38 @@ fd_close: I32 -> I32
 sock_last_error: () -> I32
 < sock_last_error = -> wsa_get_last_error!
 
+// Winsock is reference counted: every open socket handle, including accepted
+// ones, holds one WSAStartup reference that sock_close releases. This keeps the
+// count balanced without global state.
+wsa_acquire: () -> Bool
+wsa_acquire = ->
+    // WSADATA is under 512 bytes on x64.
+    mut wsa_data: [U8; 512] = [0; 512]
+    // WSAStartup returns its error instead of setting the last error.
+    code = wsa_startup (514 as U16), ((&mut wsa_data) as *U8)
+    if code != (0 as I32)
+        wsa_set_last_error code
+    code == (0 as I32)
+
+// Releases the reference of a handle that failed to open, keeping the
+// handle's error code as the last socket error.
+wsa_release_failed: () -> ()
+wsa_release_failed = ->
+    error = wsa_get_last_error!
+    wsa_cleanup!
+    wsa_set_last_error error
+    return
+
 // INVALID_SOCKET is all ones, which becomes -1 as I64.
 sock_open: () -> I64
 < sock_open = ->
-    // wsa_startup is reference counted and cheap once initialized; calling it
-    // per socket avoids global state. WSADATA is under 512 bytes on x64.
-    mut wsa_data: [U8; 512] = [0; 512]
-    if wsa_startup (514 as U16), ((&mut wsa_data) as *U8) != (0 as I32)
+    if !(wsa_acquire!)
         0 - 1
     else
-        (socket (2 as I32), (1 as I32), (6 as I32)) as I64
+        sock = (socket (2 as I32), (1 as I32), (6 as I32)) as I64
+        if sock < 0
+            wsa_release_failed!
+        sock
 
 sock_bind: I64 -> *U8 -> I32 -> I32
 < sock_bind = sock, addr, len -> bind (sock as U64), addr, len
@@ -154,7 +178,14 @@ sock_listen: I64 -> I32 -> I32
 < sock_listen = sock, backlog -> listen (sock as U64), backlog
 
 sock_accept: I64 -> *U8 -> *I32 -> I64
-< sock_accept = sock, addr, len -> (accept (sock as U64), addr, len) as I64
+< sock_accept = sock, addr, len ->
+    if !(wsa_acquire!)
+        0 - 1
+    else
+        accepted = (accept (sock as U64), addr, len) as I64
+        if accepted < 0
+            wsa_release_failed!
+        accepted
 
 sock_connect: I64 -> *U8 -> I32 -> I32
 < sock_connect = sock, addr, len -> connect (sock as U64), addr, len
@@ -172,7 +203,14 @@ sock_shutdown: I64 -> I32 -> I32
 < sock_shutdown = sock, how -> shutdown (sock as U64), how
 
 sock_close: I64 -> I32
-< sock_close = sock -> closesocket (sock as U64)
+< sock_close = sock ->
+    // closesocket releases the handle even when it reports an error, so the
+    // handle's Winsock reference goes with it; keep closesocket's error.
+    result = closesocket (sock as U64)
+    error = wsa_get_last_error!
+    wsa_cleanup!
+    wsa_set_last_error error
+    result
 
 // struct sockaddr_in starts with a 16-bit address family.
 sockaddr_v4_set_family: *U8 -> ()
