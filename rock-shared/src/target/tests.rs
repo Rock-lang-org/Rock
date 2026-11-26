@@ -18,6 +18,29 @@ fn parses_supported_triples() {
 }
 
 #[test]
+fn normalizes_triple_aliases() {
+    let canonical = |triple: &str| Target::parse(triple).unwrap().triple;
+    assert_eq!(canonical("arm64-apple-darwin"), "aarch64-apple-darwin");
+    assert_eq!(
+        canonical("aarch64-apple-darwin23.4.0"),
+        "aarch64-apple-darwin"
+    );
+    assert_eq!(canonical("x86_64-apple-macosx14.0"), "x86_64-apple-darwin");
+    assert_eq!(
+        canonical("aarch64-redhat-linux-gnu"),
+        "aarch64-unknown-linux-gnu"
+    );
+    assert_eq!(
+        canonical("x86_64-uwp-windows-msvc"),
+        "x86_64-pc-windows-msvc"
+    );
+    assert_eq!(
+        Target::parse("arm64-apple-darwin").unwrap(),
+        Target::parse("aarch64-apple-darwin").unwrap()
+    );
+}
+
+#[test]
 fn rejects_unsupported_triples() {
     assert!(Target::parse("x86_64-pc-windows-gnu").is_err());
     assert!(Target::parse("wasm32-unknown-unknown").is_err());

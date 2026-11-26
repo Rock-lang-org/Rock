@@ -46,16 +46,27 @@ impl Target {
             Some(&"aarch64") | Some(&"arm64") => "aarch64",
             _ => return Err(unsupported()),
         };
-        let (os, env) = match parts.as_slice() {
-            [_, _, "linux", "gnu"] => (TargetOs::Linux, "gnu"),
+        // Aliases (`arm64`, versioned Darwin, other vendors) normalize to one
+        // canonical triple: sysroot paths, build directories and artifact
+        // compatibility all compare triples as strings.
+        let (os, env, canonical) = match parts.as_slice() {
+            [_, _, "linux", "gnu"] => (
+                TargetOs::Linux,
+                "gnu",
+                format!("{}-unknown-linux-gnu", arch),
+            ),
             [_, "apple", os] if os.starts_with("darwin") || os.starts_with("macos") => {
-                (TargetOs::MacOs, "")
+                (TargetOs::MacOs, "", format!("{}-apple-darwin", arch))
             }
-            [_, _, "windows", "msvc"] => (TargetOs::Windows, "msvc"),
+            [_, _, "windows", "msvc"] => (
+                TargetOs::Windows,
+                "msvc",
+                format!("{}-pc-windows-msvc", arch),
+            ),
             _ => return Err(unsupported()),
         };
         Ok(Self {
-            triple: triple.to_string(),
+            triple: canonical,
             arch: arch.to_string(),
             os,
             env: env.to_string(),

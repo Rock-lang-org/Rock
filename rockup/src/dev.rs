@@ -116,10 +116,13 @@ pub(crate) fn package_dev_std(
         )
     })?;
 
-    let layout = crate::layout::ToolchainLayout::new_for_target(
-        sysroot_root,
-        target_triple.unwrap_or_else(host_target_triple),
-    );
+    // Canonical triples keep `arm64-apple-darwin` and `aarch64-apple-darwin`
+    // in one component directory.
+    let target_triple = match target_triple {
+        Some(triple) => rock_shared::target::Target::parse(&triple)?.triple,
+        None => host_target_triple(),
+    };
+    let layout = crate::layout::ToolchainLayout::new_for_target(sysroot_root, target_triple);
     fs::create_dir_all(&layout.target_component_dir).map_err(|e| {
         format!(
             "Failed to create dev sysroot target libdir {}: {}",

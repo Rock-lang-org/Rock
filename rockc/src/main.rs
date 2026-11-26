@@ -235,7 +235,12 @@ impl Config {
 
     fn into_compiler_config(self) -> Result<rock_lib::Config, Diagnostics> {
         let config = self;
-        config.resolved_target()?;
+        // Pass the canonical triple on, so aliases such as `arm64-apple-darwin`
+        // name the same target everywhere downstream.
+        let target = match &config.target {
+            Some(_) => Some(config.resolved_target()?.triple),
+            None => None,
+        };
         let lint_levels = config.lint_levels()?;
         let entry_file = config.entry_file.ok_or_else(|| {
             diagnostics_from_message("Missing required --entry-file unless --print is used")
@@ -271,7 +276,7 @@ impl Config {
             no_prelude: config.no_prelude,
             no_std: config.no_std,
             sysroot: config.sysroot,
-            target: config.target,
+            target,
         })
     }
 

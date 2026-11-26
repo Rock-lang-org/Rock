@@ -45,10 +45,11 @@ pub(crate) fn build_project_for_target(
     let mut package = Package::load(project_root.to_path_buf())?;
     package.profile = profile;
     package.lint_args = lint_args;
-    if let Some(triple) = &target_triple {
-        rock_shared::target::Target::parse(triple)?;
-    }
-    package.target_triple = target_triple;
+    // Store the canonical triple: it names the build directory and the
+    // sysroot std component.
+    package.target_triple = target_triple
+        .map(|triple| rock_shared::target::Target::parse(&triple).map(|target| target.triple))
+        .transpose()?;
     let binaries = package.manifest.binaries().cloned().collect::<Vec<_>>();
     build_targets(package, binaries)
 }
