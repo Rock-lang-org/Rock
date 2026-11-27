@@ -6,6 +6,7 @@
 > std::control::control_flow::ControlFlow
 > std::ffi::libc::exit
 > std::ffi::libc::puts
+> std::sys::stdout_prepare
 > std::ops::range::Range
 > std::collections::vec::Vec
 
@@ -34,6 +35,7 @@ impl RightFoldable I64 for Range
                         break
                     index = index - 1
             _ =>
+                stdout_prepare!
                 puts "foldr requires a bounded range".as_ptr!
                 exit (1 as I32)
         state
@@ -64,6 +66,7 @@ impl FoldableValue I64 for Range
                         break
                     index = index + 1
             _ =>
+                stdout_prepare!
                 puts "for_each requires a bounded range".as_ptr!
                 exit (1 as I32)
         ControlFlow::Continue state

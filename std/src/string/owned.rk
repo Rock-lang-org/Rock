@@ -7,6 +7,7 @@
 > std::ffi::libc::memcpy
 > std::ffi::libc::strlen
 > std::ffi::libc::puts
+> std::sys::stdout_prepare
 > std::ffi::libc::exit
 > std::clone::Clone
 > std::cmp::eq::PartialEq
@@ -59,6 +60,7 @@ impl From &Str for String
 impl From &[U8] for String
     from = bytes ->
         if !(is_utf8 bytes)
+            stdout_prepare!
             puts "invalid UTF-8".as_ptr!
             exit (1 as I32)
         slice_len = bytes.len!
@@ -88,6 +90,7 @@ impl String
         len = strlen s
         bytes = unsafe slice_from_raw_parts s, len
         if !(is_utf8 bytes)
+            stdout_prepare!
             puts "invalid UTF-8".as_ptr!
             exit (1 as I32)
         raw: RawBuffer U8 = unsafe RawBuffer::with_capacity 1, (len + 1)
@@ -176,6 +179,7 @@ impl From Char for String
     from = c ->
         value = c as I64
         if value > 1114111 || (value >= 55296 && value <= 57343)
+            stdout_prepare!
             puts "invalid Unicode scalar".as_ptr!
             exit (1 as I32)
         len = if value < 128 then 1 else if value < 2048 then 2 else if value < 65536 then 3 else 4
@@ -279,6 +283,7 @@ impl String
         if len < 0 || len >= self.raw_len
             return
         if !(str_is_char_boundary self.as_str!, len)
+            stdout_prepare!
             puts "string index is not a UTF-8 boundary".as_ptr!
             exit (1 as I32)
         mut ptr = self.raw.ptr!
@@ -290,6 +295,7 @@ impl String
     ^@insert_str: I64 -> &Str -> ()
     ^@insert_str = index, text ->
         if !(str_is_char_boundary self.as_str!, index)
+            stdout_prepare!
             puts "string index is not a UTF-8 boundary".as_ptr!
             exit (1 as I32)
         count = text.len!

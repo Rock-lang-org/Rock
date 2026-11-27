@@ -4,7 +4,7 @@ use std::time::UNIX_EPOCH;
 pub fn std_cache_key(std_dir: &Path, compiler_stamp: &str) -> String {
     let mut hash = 0xcbf29ce484222325;
     update_cache_hash(&mut hash, compiler_stamp.as_bytes());
-    let canonical_std_dir = std_dir.canonicalize().unwrap();
+    let canonical_std_dir = dunce::canonicalize(&std_dir).unwrap();
     update_cache_hash(&mut hash, canonical_std_dir.to_string_lossy().as_bytes());
 
     let mut files = Vec::new();

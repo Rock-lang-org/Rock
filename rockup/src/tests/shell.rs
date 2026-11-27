@@ -8,6 +8,8 @@ use crate::{
 
 use super::support::{fake_home, temp_test_dir};
 
+// Shims are POSIX shell scripts that quote the manager path.
+#[cfg(unix)]
 #[test]
 fn test_ensure_shims_persists_manager_and_preserves_existing_binary() {
     let temp_dir = temp_test_dir("persistent_manager");
@@ -20,7 +22,7 @@ fn test_ensure_shims_persists_manager_and_preserves_existing_binary() {
     );
     for binary in ["rock", "rockc", "rock-lsp"] {
         let shim = fs::read_to_string(home.bin_dir().join(binary)).unwrap();
-        assert!(shim.contains(installed.canonicalize().unwrap().to_str().unwrap()));
+        assert!(shim.contains(dunce::canonicalize(&installed).unwrap().to_str().unwrap()));
     }
     fs::write(&installed, b"existing manager").unwrap();
     ensure_shims(&home).unwrap();

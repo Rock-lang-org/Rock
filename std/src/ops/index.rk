@@ -1,5 +1,6 @@
 > std::ffi::libc::exit
 > std::ffi::libc::puts
+> std::sys::stdout_prepare
 > std::mem::sized::Sized
 > std::ops::range::Range
 > std::collections::slice::slice_from_raw_parts
@@ -22,6 +23,7 @@ lang index_mut
 index_bounds_check: I64 -> I64 -> ()
 index_bounds_check = index, len ->
     if index < 0 || index >= len
+        stdout_prepare!
         puts "index out of bounds".as_ptr!
         exit (1 as I32)
 
@@ -45,6 +47,7 @@ range_bounds_check: Range -> I64 -> (I64, I64)
     start = bounds.0
     end = bounds.1
     if start < 0 || end < start || end > len
+        stdout_prepare!
         puts "range out of bounds".as_ptr!
         exit (1 as I32)
     bounds

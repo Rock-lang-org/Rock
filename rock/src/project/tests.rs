@@ -42,7 +42,7 @@ fn finds_nearest_manifest_and_resolves_no_std_project() {
 
     assert_eq!(find_project_root(&nested_source), Some(root.clone()));
     let project = resolve_analysis_project(&root).unwrap();
-    assert_eq!(project.root_dir, root.canonicalize().unwrap());
+    assert_eq!(project.root_dir, dunce::canonicalize(&root).unwrap());
     assert_eq!(project.current_crate_name, None);
     assert!(project.no_std);
     assert!(project.no_prelude);

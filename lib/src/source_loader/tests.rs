@@ -372,7 +372,7 @@ fn source_module_set_lookup_uses_only_preindexed_paths() {
         id: ModuleId(0),
         qualified_name: "demo".to_string(),
         path: real_path.clone(),
-        canonical_path: real_path.canonicalize().unwrap(),
+        canonical_path: dunce::canonicalize(&real_path).unwrap(),
         module,
     }]);
 

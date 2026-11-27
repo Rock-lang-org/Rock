@@ -243,9 +243,9 @@ fn editing_an_open_module_updates_hints_in_an_unchanged_buffer() {
             )
         });
         let backend = service.inner();
-        let main = Url::parse("file:///virtual/main.rk").unwrap();
-        let module = Url::parse("file:///virtual/values.rk").unwrap();
-        let unrelated = Url::parse("file:///other/main.rk").unwrap();
+        let main = Url::from_file_path(virtual_path("main.rk")).unwrap();
+        let module = Url::from_file_path(virtual_path("values.rk")).unwrap();
+        let unrelated = Url::from_file_path(absolute_path("other", "main.rk")).unwrap();
         for (uri, text) in [
             (unrelated.clone(), "main = -> 0\n"),
             (module.clone(), "< answer = -> 42\n"),
@@ -430,6 +430,10 @@ fn canonical_temp_dir() -> std::path::PathBuf {
 
 // An absolute path that exists only in the editor's buffers.
 fn virtual_path(name: &str) -> PathBuf {
-    let root = if cfg!(windows) { "C:\\virtual" } else { "/virtual" };
-    PathBuf::from(root).join(name)
+    absolute_path("virtual", name)
+}
+
+fn absolute_path(dir: &str, name: &str) -> PathBuf {
+    let root = if cfg!(windows) { "C:\\" } else { "/" };
+    PathBuf::from(root).join(dir).join(name)
 }

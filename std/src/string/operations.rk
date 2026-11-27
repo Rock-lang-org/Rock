@@ -10,6 +10,7 @@
 > std::ops::index::range_bounds_check
 > std::ops::range::Range
 > std::ffi::libc::puts
+> std::sys::stdout_prepare
 > std::ffi::libc::exit
 > std::functional::foldable::FoldableValue
 > std::control::control_flow::ControlFlow
@@ -222,6 +223,7 @@ str_slice: &Str -> Range -> &Str
 < str_slice = text, range ->
     bounds = range_bounds_check range, text.len!
     if !(str_is_char_boundary text, bounds.0) || !(str_is_char_boundary text, bounds.1)
+        stdout_prepare!
         puts "string index is not a UTF-8 boundary".as_ptr!
         exit (1 as I32)
     base: *U8 = text.as_ptr!

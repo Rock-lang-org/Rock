@@ -365,7 +365,11 @@ fn test_missing_module_reports_all_searched_paths() {
     let _ = std::fs::remove_dir_all(&dir);
 
     assert!(text.contains("missing.rk"), "diagnostics were {text}");
-    assert!(text.contains("missing/mod.rk"), "diagnostics were {text}");
+    let nested = std::path::Path::new("missing").join("mod.rk");
+    assert!(
+        text.contains(&nested.display().to_string()),
+        "diagnostics were {text}"
+    );
 }
 
 #[test]

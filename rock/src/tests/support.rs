@@ -208,7 +208,7 @@ pub(crate) fn load_package(root: PathBuf) -> Package {
 
 pub(crate) fn load_dependency_package(root: PathBuf, project_root: &Path) -> Package {
     let mut package = load_package(root);
-    package.use_project_build(&project_root.canonicalize().unwrap());
+    package.use_project_build(&dunce::canonicalize(&project_root).unwrap());
     package
 }
 

@@ -24,7 +24,7 @@ fn load_product_artifact_inserts_artifact_only_extern_record() {
     assert!(dep.body_providers().generic_function(answer_id).is_some());
     assert_eq!(
         dep.link().object_path(),
-        Some(&object_path.canonicalize().unwrap())
+        Some(&dunce::canonicalize(&object_path).unwrap())
     );
 }
 
@@ -482,7 +482,7 @@ fn load_product_artifact_resolves_common_relative_object_path() {
     let dep = ctx.extern_crate("dep").unwrap();
     assert_eq!(
         dep.link().object_path().cloned(),
-        Some(object_path.canonicalize().unwrap())
+        Some(dunce::canonicalize(&object_path).unwrap())
     );
 
     let _ = fs::remove_dir_all(&base);
@@ -537,7 +537,7 @@ fn load_product_artifact_prefers_artifact_relative_object_over_cwd() {
     let dep = ctx.extern_crate("dep").unwrap();
     assert_eq!(
         dep.link().object_path().cloned(),
-        Some(artifact_object_path.canonicalize().unwrap())
+        Some(dunce::canonicalize(&artifact_object_path).unwrap())
     );
 
     let _ = fs::remove_dir_all(&base);

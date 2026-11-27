@@ -40,8 +40,7 @@ fn test_package_dev_std_writes_sysroot_layout() {
 
     assert_eq!(
         packaged,
-        sysroot
-            .canonicalize()
+        dunce::canonicalize(&sysroot)
             .unwrap()
             .join(LIB_DIR)
             .join("rocklib")

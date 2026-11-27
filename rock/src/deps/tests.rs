@@ -134,7 +134,7 @@ fn git_checkout_path_dependencies_cannot_escape_the_checkout() {
     let inner = resolve_dependency_root(&checkout, &root, "inner", &path_dep("inner"));
     assert_eq!(
         inner.unwrap(),
-        checkout.join("inner").canonicalize().unwrap()
+        dunce::canonicalize(&checkout.join("inner")).unwrap()
     );
     let escaped =
         resolve_dependency_root(&checkout, &root, "out", &path_dep("../../../../../outside"));
@@ -184,7 +184,7 @@ fn pinned_dependency_uses_project_cache_without_network() {
         version: None,
     };
     let result = resolve_dependency_root(&root.join("child"), &root, "repo", &dependency);
-    assert_eq!(result.unwrap(), cached.canonicalize().unwrap());
+    assert_eq!(result.unwrap(), dunce::canonicalize(&cached).unwrap());
     std::fs::remove_dir_all(root).unwrap();
 }
 

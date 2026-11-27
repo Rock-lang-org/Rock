@@ -179,7 +179,8 @@ main = ->
         vec![("protocols".to_string(), provider_artifact.clone())],
     );
 
-    assert_eq!(explicit_stdout, "drop\n");
+    // C puts writes through the CRT, which uses text mode on Windows.
+    assert_eq!(explicit_stdout.replace("\r\n", "\n"), "drop\n");
     assert_eq!(explicit_exit_code, 42);
 
     // Normal scope return must invoke the marked Drop method without an explicit call.
@@ -194,7 +195,7 @@ main = ->
         vec![("protocols".to_string(), provider_artifact)],
     );
 
-    assert_eq!(automatic_stdout, "drop\n");
+    assert_eq!(automatic_stdout.replace("\r\n", "\n"), "drop\n");
     assert_eq!(automatic_exit_code, 42);
 
     let _ = fs::remove_dir_all(temp_dir);
