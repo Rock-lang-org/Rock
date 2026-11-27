@@ -39,14 +39,13 @@ jobs:
       - name: Install LLVM 18 (Windows)
         if: runner.os == 'Windows'
         run: |
-          # Static MSVC build of LLVM with llvm-config, built against the
-          # dynamic CRT (msvcrt) that Rust uses by default.
-          curl -fsSL -o llvm.7z https://github.com/vovkos/llvm-package-windows/releases/download/llvm-18.1.8/llvm-18.1.8-windows-amd64-msvc17-msvcrt.7z
-          7z x llvm.7z -o"$RUNNER_TEMP/llvm" > /dev/null
-          config=$(find "$RUNNER_TEMP/llvm" -name llvm-config.exe | head -n 1)
-          test -n "$config"
-          prefix=$(cd "$(dirname "$config")/.." && pwd -W)
-          echo "LLVM_SYS_180_PREFIX=$prefix" >> "$GITHUB_ENV"
+          # Official LLVM release: llvm-config, static libraries and every
+          # backend, so cross-target tests (AArch64 Darwin) run here too.
+          curl -fsSL -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-pc-windows-msvc.tar.xz
+          mkdir -p "$RUNNER_TEMP/llvm"
+          tar -xJf llvm.tar.xz -C "$RUNNER_TEMP/llvm" --strip-components=1
+          test -x "$RUNNER_TEMP/llvm/bin/llvm-config.exe"
+          echo "LLVM_SYS_180_PREFIX=$(cd "$RUNNER_TEMP/llvm" && pwd -W)" >> "$GITHUB_ENV"
 
       # Puts MSVC's link.exe and the CRT/SDK libraries on PATH and LIB for
       # rockc's linker invocation.

@@ -21,6 +21,21 @@ use crate::target::{Target, TargetOs};
 /// Overrides the linker driver for every target (e.g. a cross linker).
 const LINKER_ENV: &str = "ROCK_LINKER";
 
+/// The triple handed to LLVM. Darwin objects need a deployment version in the
+/// triple, or LLVM emits no LC_BUILD_VERSION and ld64 warns on every link.
+/// The minimums match the first macOS release for each architecture that
+/// Rust also targets.
+fn llvm_triple(target: &Target) -> String {
+    match target.os {
+        TargetOs::MacOs => {
+            let arch = target.triple.split('-').next().unwrap_or("aarch64");
+            let version = if arch == "x86_64" { "10.12.0" } else { "11.0.0" };
+            format!("{arch}-apple-macosx{version}")
+        }
+        TargetOs::Linux | TargetOs::Windows => target.triple.clone(),
+    }
+}
+
 fn target_machine(
     target: &Target,
     opt_level: OptimizationLevel,
@@ -30,7 +45,7 @@ fn target_machine(
         LlvmTarget::initialize_all(&InitializationConfig::default());
     });
 
-    let triple = TargetTriple::create(&target.triple);
+    let triple = TargetTriple::create(&llvm_triple(target));
     let llvm_target = LlvmTarget::from_triple(&triple).map_err(|e| {
         CodegenError::toolchain(format!(
             "LLVM has no backend for target '{}': {}",
