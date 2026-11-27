@@ -25,6 +25,9 @@ pub(crate) fn prepare_dev_tools() {
     });
 }
 
+/// Set for isolated test children: the parent already built every dev binary.
+const DEV_TOOLS_BUILT: &str = "ROCK_TEST_DEV_TOOLS_BUILT";
+
 /// Prepares the dev tools and the `rock` binary itself, for tests that run the CLI.
 pub(crate) fn prepare_rock_cli() {
     prepare_dev_tools();
@@ -40,6 +43,13 @@ pub(crate) fn ensure_dev_binary_built(package: &str) -> Result<(), String> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if built_packages.contains(package) {
+        return Ok(());
+    }
+    // An isolated child reuses the parent's binaries. Cargo relinks a binary
+    // into the target directory even on a no-op build, and the parent's other
+    // tests could spawn it in that window.
+    if std::env::var_os(DEV_TOOLS_BUILT).is_some() {
+        built_packages.insert(package.to_string());
         return Ok(());
     }
 
@@ -75,7 +85,7 @@ pub(crate) fn ensure_dev_binary_built(package: &str) -> Result<(), String> {
 /// Overrides belong to the child command, never to the concurrent parent suite.
 pub(crate) fn run_isolated_test(name: &str, env: &[(&str, &OsStr)]) -> bool {
     const ISOLATED_TEST: &str = "ROCK_ISOLATED_TEST";
-    prepare_dev_tools();
+    prepare_rock_cli();
     if std::env::var(ISOLATED_TEST).as_deref() == Ok(name) {
         return false;
     }
@@ -83,6 +93,7 @@ pub(crate) fn run_isolated_test(name: &str, env: &[(&str, &OsStr)]) -> bool {
     command
         .args([name, "--exact", "--nocapture"])
         .env(ISOLATED_TEST, name)
+        .env(DEV_TOOLS_BUILT, "1")
         .env("ROCKC", crate::rockc::resolve_rockc_path().unwrap());
     for (key, value) in env {
         command.env(key, value);
