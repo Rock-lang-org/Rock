@@ -29,7 +29,11 @@ fn llvm_triple(target: &Target) -> String {
     match target.os {
         TargetOs::MacOs => {
             let arch = target.triple.split('-').next().unwrap_or("aarch64");
-            let version = if arch == "x86_64" { "10.12.0" } else { "11.0.0" };
+            let version = if arch == "x86_64" {
+                "10.12.0"
+            } else {
+                "11.0.0"
+            };
             format!("{arch}-apple-macosx{version}")
         }
         TargetOs::Linux | TargetOs::Windows => target.triple.clone(),

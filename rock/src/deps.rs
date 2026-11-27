@@ -190,8 +190,8 @@ fn escaping_symlink(root: &Path) -> Result<Option<PathBuf>, String> {
             let path = entry.path();
             let kind = entry.file_type().map_err(|error| error.to_string())?;
             if kind.is_symlink() {
-                let inside = dunce::canonicalize(&path)
-                    .is_ok_and(|target| target.starts_with(&root));
+                let inside =
+                    dunce::canonicalize(&path).is_ok_and(|target| target.starts_with(&root));
                 if !inside {
                     return Ok(Some(path));
                 }
@@ -230,8 +230,13 @@ fn cached_checkout_matches(cache: &Path, rev: &str) -> Result<bool, String> {
     };
     Ok(
         git(&["rev-parse", "HEAD"])?.is_some_and(|head| head.eq_ignore_ascii_case(rev))
-            && git(&["status", "--porcelain", "--untracked-files=all", "--ignored"])?
-                .is_some_and(|status| status.is_empty())
+            && git(&[
+                "status",
+                "--porcelain",
+                "--untracked-files=all",
+                "--ignored",
+            ])?
+            .is_some_and(|status| status.is_empty())
             && escaping_symlink(cache)?.is_none(),
     )
 }

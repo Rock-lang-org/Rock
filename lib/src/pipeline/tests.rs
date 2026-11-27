@@ -183,7 +183,10 @@ fn compile_with_products_records_canonical_extern_artifact_paths() {
     let products = output.products.expect("products should be emitted");
     let dependency_path = &products.dependencies[0].artifact_path;
     assert!(dependency_path.is_absolute());
-    assert_eq!(dependency_path, &dunce::canonicalize(&dep_artifact).unwrap());
+    assert_eq!(
+        dependency_path,
+        &dunce::canonicalize(&dep_artifact).unwrap()
+    );
 
     let _ = fs::remove_dir_all(&base);
 }

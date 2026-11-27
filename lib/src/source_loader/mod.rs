@@ -574,7 +574,7 @@ impl SourceDatabase {
             return Ok(path.to_path_buf());
         }
 
-        dunce::canonicalize(&path).map_err(|error| SourceLoadError::Io {
+        dunce::canonicalize(path).map_err(|error| SourceLoadError::Io {
             path: path.to_path_buf(),
             message: error.to_string(),
         })

@@ -397,8 +397,8 @@ fn rockc_executable_file(rockc: &Path) -> Option<PathBuf> {
         return rockc.is_file().then(|| rockc.to_path_buf());
     }
     // Like Command on Windows, an extensionless name also matches `name.exe`.
-    let suffixed = (rockc.extension().is_none() && !std::env::consts::EXE_SUFFIX.is_empty())
-        .then(|| {
+    let suffixed =
+        (rockc.extension().is_none() && !std::env::consts::EXE_SUFFIX.is_empty()).then(|| {
             let mut name = rockc.as_os_str().to_owned();
             name.push(std::env::consts::EXE_SUFFIX);
             PathBuf::from(name)

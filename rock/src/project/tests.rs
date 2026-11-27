@@ -27,7 +27,10 @@ fn finds_nearest_manifest_and_resolves_no_std_project() {
     let root = canonical_temp_dir().join(format!(
         "rock_project_analysis_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("test").replace("::", "-")
+        std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace("::", "-")
     ));
     let source_dir = root.join("src/nested");
     fs::create_dir_all(&source_dir).unwrap();

@@ -20,7 +20,8 @@ fn test_rockc_path_from_test_binary_uses_profile_dir() {
 
     assert_eq!(
         rockc_path_from_current_exe(&current).unwrap(),
-        PathBuf::from("/workspace/target/debug").join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
+        PathBuf::from("/workspace/target/debug")
+            .join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
     );
 }
 
@@ -30,7 +31,8 @@ fn test_rockc_path_from_binary_uses_same_directory() {
 
     assert_eq!(
         rockc_path_from_current_exe(&current).unwrap(),
-        PathBuf::from("/workspace/target/release").join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
+        PathBuf::from("/workspace/target/release")
+            .join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
     );
 }
 
@@ -124,7 +126,8 @@ fn test_dependency_invocation_uses_extern_artifact_for_all_deps() {
     );
     let package = load_package(temp_dir.clone());
     let invocation = build_dependency_artifact_invocation(
-        PathBuf::from("/workspace/target/debug").join(format!("rockc{}", std::env::consts::EXE_SUFFIX)),
+        PathBuf::from("/workspace/target/debug")
+            .join(format!("rockc{}", std::env::consts::EXE_SUFFIX)),
         &package,
         &[
             ExternArtifact {
@@ -141,7 +144,8 @@ fn test_dependency_invocation_uses_extern_artifact_for_all_deps() {
 
     assert_eq!(
         invocation.executable,
-        PathBuf::from("/workspace/target/debug").join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
+        PathBuf::from("/workspace/target/debug")
+            .join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
     );
     assert!(args
         .windows(2)
@@ -174,7 +178,8 @@ fn test_root_invocation_uses_extern_artifact_for_all_deps() {
     write_package(&temp_dir, "app", "src/main.rk", &[], "main = -> 0\n");
     let package = load_package(temp_dir.clone());
     let invocation = build_root_invocation(
-        PathBuf::from("/workspace/target/debug").join(format!("rockc{}", std::env::consts::EXE_SUFFIX)),
+        PathBuf::from("/workspace/target/debug")
+            .join(format!("rockc{}", std::env::consts::EXE_SUFFIX)),
         &package,
         &[
             ExternArtifact {

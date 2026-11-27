@@ -80,7 +80,11 @@ fn test_run_requires_a_known_binary_when_multiple_targets_exist() {
             .unwrap(),
         40
     );
-    assert!(!root.join("build").join("debug").join(exe("client")).exists());
+    assert!(!root
+        .join("build")
+        .join("debug")
+        .join(exe("client"))
+        .exists());
     assert!(
         crate::build::build_project_for_target(&root, BuildProfile::Debug, Vec::new(), None)
             .is_err()
@@ -160,8 +164,16 @@ fn test_cli_build_lists_all_products_and_run_selects_a_binary() {
                 .artifact_path()
                 .display()
                 .to_string(),
-            root.join("build").join("debug").join(exe("server")).display().to_string(),
-            root.join("build").join("debug").join(exe("client")).display().to_string(),
+            root.join("build")
+                .join("debug")
+                .join(exe("server"))
+                .display()
+                .to_string(),
+            root.join("build")
+                .join("debug")
+                .join(exe("client"))
+                .display()
+                .to_string(),
         ]
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("3/3 crates · 100%"));

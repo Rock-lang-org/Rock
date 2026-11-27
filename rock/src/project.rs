@@ -53,8 +53,8 @@ fn resolve_project(
     let mut package = Package::load(project_root.to_path_buf())?;
     package.target_triple = target_triple.map(str::to_string);
     if let Some(source_path) = source_path {
-        let source_path = dunce::canonicalize(&source_path)
-            .unwrap_or_else(|_| source_path.to_path_buf());
+        let source_path =
+            dunce::canonicalize(&source_path).unwrap_or_else(|_| source_path.to_path_buf());
         if let Some(target) = package.manifest.targets.iter().find(|target| {
             let entry = package.root_dir.join(target.path());
             dunce::canonicalize(&entry).unwrap_or(entry) == source_path

@@ -7,7 +7,8 @@ fn test_dev_target_binary_from_test_binary_uses_profile_dir() {
 
     assert_eq!(
         dev_target_binary_from_exe(&current, "rockc").unwrap(),
-        PathBuf::from("/workspace/target/debug").join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
+        PathBuf::from("/workspace/target/debug")
+            .join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
     );
 }
 
@@ -17,7 +18,8 @@ fn test_dev_target_binary_from_binary_uses_same_directory() {
 
     assert_eq!(
         dev_target_binary_from_exe(&current, "rockc").unwrap(),
-        PathBuf::from("/workspace/target/release").join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
+        PathBuf::from("/workspace/target/release")
+            .join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
     );
 }
 

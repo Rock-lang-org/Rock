@@ -44,12 +44,7 @@ fn run_with_shim(source: &str, feature: &str, opt_level: u8) -> Output {
     if cfg!(target_os = "linux") {
         link.arg("-no-pie");
     }
-    let linked = run_test_command(
-        link.arg("-lm")
-            .arg("-pthread")
-            .arg("-o")
-            .arg(&executable),
-    );
+    let linked = run_test_command(link.arg("-lm").arg("-pthread").arg("-o").arg(&executable));
     assert!(
         linked.status.success(),
         "{}",

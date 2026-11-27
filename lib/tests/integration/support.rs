@@ -527,7 +527,10 @@ impl ProcessTree {
     pub(crate) fn adopt(&self, child: &Child) -> Result<(), std::io::Error> {
         use std::os::windows::io::AsRawHandle;
         let process = child.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
-        if unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(self.0, process) } == 0 {
+        if unsafe {
+            windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(self.0, process)
+        } == 0
+        {
             return Err(std::io::Error::last_os_error());
         }
         Ok(())

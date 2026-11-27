@@ -216,7 +216,10 @@ fn test_cfg_emits_objects_for_the_selected_target() {
     let mut config = no_std_config(entry, &dir, "aarch64-apple-darwin");
     config.emit_llvm = true;
     if let Err(diagnostics) = rock_lib::compile(&config) {
-        panic!("darwin object emission should succeed:\n{}", messages(&diagnostics));
+        panic!(
+            "darwin object emission should succeed:\n{}",
+            messages(&diagnostics)
+        );
     }
     let ir = fs::read_to_string(dir.join("build/main.ll")).unwrap();
     assert!(

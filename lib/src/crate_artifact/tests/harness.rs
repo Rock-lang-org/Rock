@@ -17,7 +17,10 @@ fn bounded_runner_kills_descendants_holding_pipes_open() {
     let started = Instant::now();
     let result = std::panic::catch_unwind(|| {
         // The shell waits on a descendant that holds the output pipes.
-        let mut command = shell("sleep 30 & wait", "powershell -NoProfile -Command Start-Sleep 30");
+        let mut command = shell(
+            "sleep 30 & wait",
+            "powershell -NoProfile -Command Start-Sleep 30",
+        );
         run_test_command_with_timeout(&mut command, Duration::from_millis(100));
     });
 

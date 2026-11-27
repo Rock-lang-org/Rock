@@ -314,7 +314,10 @@ fn product_language_items_remap_every_def_id_at_nonzero_runtime_crate_id() {
     let base = canonical_temp_dir().join(format!(
         "rock_language_item_remap_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("test").replace("::", "-")
+        std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace("::", "-")
     ));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).expect("temporary artifact directory");

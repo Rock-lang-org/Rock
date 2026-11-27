@@ -126,7 +126,7 @@ impl ModuleSources {
 
     /// The cached module for `path`, looked up by canonical path first.
     pub(crate) fn find_cached(&self, path: &Path) -> Option<&ast::Module> {
-        let canonical = dunce::canonicalize(&path).unwrap_or_else(|_| path.to_path_buf());
+        let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         self.file_cache
             .get(&canonical)
             .or_else(|| self.file_cache.get(path))
@@ -134,7 +134,7 @@ impl ModuleSources {
 
     /// Like `find_cached`, and records the module as loaded.
     pub(crate) fn load_cached(&mut self, path: &Path) -> Option<ast::Module> {
-        let canonical = dunce::canonicalize(&path).unwrap_or_else(|_| path.to_path_buf());
+        let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let module = self
             .file_cache
             .get(&canonical)

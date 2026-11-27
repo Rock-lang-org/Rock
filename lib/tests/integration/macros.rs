@@ -2,8 +2,6 @@ use crate::support::*;
 use bincode::Options;
 use serde::Serialize;
 use std::fs;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -196,10 +194,17 @@ fn proc_macro_host_with_response(
     #[cfg(unix)]
     let host = {
         let host = temp_dir.join("proc_macro_host");
-        fs::write(&host, "#!/bin/sh\ncat >/dev/null\ncat \"$0.response\"\n").unwrap();
-        let mut permissions = fs::metadata(&host).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&host, permissions).unwrap();
+        // Write the executable from a child process: a write fd opened here
+        // could leak into another test thread's fork and make exec fail with
+        // ETXTBSY.
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("printf '#!/bin/sh\\ncat >/dev/null\\ncat \"$0.response\"\\n' > \"$1\" && chmod 755 \"$1\"")
+            .arg("sh")
+            .arg(&host)
+            .status()
+            .unwrap();
+        assert!(status.success());
         host
     };
     #[cfg(windows)]
