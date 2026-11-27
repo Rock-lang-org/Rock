@@ -48,6 +48,11 @@ jobs:
           tar -xJf llvm.tar.xz -C "$llvm" --strip-components=1
           test -x "$llvm/bin/llvm-config.exe"
           echo "LLVM_SYS_180_PREFIX=$(cd "$llvm" && pwd -W)" >> "$GITHUB_ENV"
+          # llvm-config lists a static libxml2 as a system library. vcpkg's
+          # static build against the dynamic CRT matches Rust's default CRT.
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install libxml2:x64-windows-static-md
+          libs="$(cygpath -u "$VCPKG_INSTALLATION_ROOT")/installed/x64-windows-static-md/lib"
+          cp "$libs/libxml2.lib" "$llvm/lib/libxml2s.lib"
 
       # Puts MSVC's link.exe and the CRT/SDK libraries on PATH and LIB for
       # rockc's linker invocation.
