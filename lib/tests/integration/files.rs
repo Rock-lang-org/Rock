@@ -49,8 +49,6 @@ main = ->
     assert_eq!(output.stdout, expected);
 }
 
-// Calls Linux's three-argument std::ffi::libc::open binding directly.
-#[cfg(target_os = "linux")]
 #[test]
 fn test_read_to_string_reports_errors() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -65,14 +63,30 @@ fn test_read_to_string_reports_errors() {
 > std::io::fs::read_to_string
 > std::io::IoError
 > std::control::Result
-> std::ffi::libc::open
-> std::ffi::libc::close
+// Each C runtime binds open differently; pick the read-only call per OS.
+cfg(target_os = "linux")
+    > std::ffi::libc::open
+    > std::ffi::libc::close
+    open_read = path -> open path, (0 as I32), (0 as I32)
+    close_fd = fd -> close fd
+
+cfg(target_os = "macos")
+    > std::ffi::libc::open
+    > std::ffi::libc::close
+    open_read = path -> open path, (0 as I32), 0, 0, 0, 0, 0, 0, 0
+    close_fd = fd -> close fd
+
+cfg(target_os = "windows")
+    extern _open: *U8 -> I32 -> I32 -> I32
+    extern _close: I32 -> I32
+    open_read = path -> _open path, (0 as I32), (0 as I32)
+    close_fd = fd -> _close fd
 
 main = ->
-    before = open "nul_path.txt".as_ptr!, (0 as I32), (0 as I32)
+    before = open_read "nul_path.txt".as_ptr!
     if before < (0 as I32)
         return 6
-    closed = close before
+    closed = close_fd before
     match read_to_string "nul_path.txt"
         Result::Ok _ => 0
         _ => return 7
@@ -93,8 +107,8 @@ main = ->
         Result::Err (IoError::Os _) => 0
         _ => return 5
     // A leaked descriptor on any path would change the next available fd.
-    after = open "nul_path.txt".as_ptr!, (0 as I32), (0 as I32)
-    closed_after = close after
+    after = open_read "nul_path.txt".as_ptr!
+    closed_after = close_fd after
     if before != after
         return 8
     0

@@ -50,7 +50,10 @@ pub(super) fn child_exited_without_reaping(child: &mut Child) -> Result<bool, st
 }
 
 #[cfg(unix)]
-pub(super) fn terminate_test_command_group(child: &Child) -> Result<(), std::io::Error> {
+pub(super) fn terminate_test_command_group(
+    child: &Child,
+    _tree: &ProcessTree,
+) -> Result<(), std::io::Error> {
     // A negative PID targets the child's process group; ESRCH only means it already
     // exited. Darwin reports EPERM instead when only unreaped zombies remain.
     let result = unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
@@ -71,23 +74,93 @@ pub(super) fn child_exited_without_reaping(child: &mut Child) -> Result<bool, st
     Ok(child.try_wait()?.is_some())
 }
 
-// Windows has no process groups: kill the direct child, which is a no-op once
-// it has exited.
 #[cfg(windows)]
-pub(super) fn terminate_test_command_group(child: &mut Child) -> Result<(), std::io::Error> {
-    match child.kill() {
-        Err(error) if error.kind() != std::io::ErrorKind::InvalidInput => Err(error),
-        _ => Ok(()),
+pub(super) fn terminate_test_command_group(
+    _child: &Child,
+    tree: &ProcessTree,
+) -> Result<(), std::io::Error> {
+    // Terminating a job whose processes all exited succeeds.
+    if unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(tree.0, 1) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+// Every process a test command started: its process group on Unix (spawned
+// with process_group(0)), a Job Object on Windows. Processes inherit the job,
+// so descendants started after adoption are covered; the child is adopted
+// right after spawn, before it can run far enough to start any.
+#[cfg(unix)]
+pub(super) struct ProcessTree;
+
+#[cfg(unix)]
+impl ProcessTree {
+    pub(super) fn new() -> Result<Self, std::io::Error> {
+        Ok(Self)
+    }
+
+    pub(super) fn adopt(&self, _child: &Child) -> Result<(), std::io::Error> {
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+pub(super) struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl ProcessTree {
+    pub(super) fn new() -> Result<Self, std::io::Error> {
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let tree = Self(job);
+        // Closing the last handle (dropping the tree) also kills the processes.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let set = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of_val(&info) as u32,
+            )
+        };
+        if set == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(tree)
+    }
+
+    pub(super) fn adopt(&self, child: &Child) -> Result<(), std::io::Error> {
+        use std::os::windows::io::AsRawHandle;
+        let process = child.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+        if unsafe { windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(self.0, process) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
     }
 }
 
 pub(super) fn terminate_and_collect_test_command(
     child: &mut Child,
+    tree: &ProcessTree,
     stdout_reader: std::thread::JoinHandle<Vec<u8>>,
     stderr_reader: std::thread::JoinHandle<Vec<u8>>,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), (std::io::Error, std::process::ExitStatus)>
 {
-    if let Err(error) = terminate_test_command_group(child) {
+    if let Err(error) = terminate_test_command_group(child, tree) {
         let _ = child.kill();
         let status = child.wait().expect("failed child must be reaped");
         drop(stdout_reader);
@@ -108,11 +181,14 @@ pub(super) fn run_test_command_with_timeout(command: &mut Command, timeout: Dura
     let executable = command.get_program().to_string_lossy().into_owned();
     #[cfg(unix)]
     command.process_group(0);
+    let tree = ProcessTree::new().expect("test process tree must be created");
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap_or_else(|error| panic!("failed to spawn {executable}: {error}"));
+    tree.adopt(&child)
+        .unwrap_or_else(|error| panic!("failed to track {executable}'s processes: {error}"));
     let stdout = child.stdout.take().expect("child stdout must be piped");
     let stderr = child.stderr.take().expect("child stderr must be piped");
     let stdout_reader = std::thread::spawn(move || {
@@ -137,6 +213,7 @@ pub(super) fn run_test_command_with_timeout(command: &mut Command, timeout: Dura
             Ok(false) => {
                 let (status, stdout, stderr) = terminate_and_collect_test_command(
                     &mut child,
+                    &tree,
                     stdout_reader,
                     stderr_reader,
                 )
@@ -156,6 +233,7 @@ pub(super) fn run_test_command_with_timeout(command: &mut Command, timeout: Dura
             Err(error) => {
                 let (status, stdout, stderr) = terminate_and_collect_test_command(
                     &mut child,
+                    &tree,
                     stdout_reader,
                     stderr_reader,
                 )
@@ -173,7 +251,7 @@ pub(super) fn run_test_command_with_timeout(command: &mut Command, timeout: Dura
             }
         }
     }
-    if let Err(error) = terminate_test_command_group(&mut child) {
+    if let Err(error) = terminate_test_command_group(&child, &tree) {
         let status = child.wait().expect("exited child must be reaped");
         drop(stdout_reader);
         drop(stderr_reader);

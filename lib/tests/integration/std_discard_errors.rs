@@ -1,4 +1,5 @@
 //! Deterministic POSIX failures, linked only into individual test executables.
+//! A definition in the executable wins over the C library's on Linux and Darwin.
 
 use std::process::{Command, Output};
 use std::sync::atomic::Ordering;
@@ -34,14 +35,17 @@ fn run_with_shim(source: &str, feature: &str, opt_level: u8) -> Output {
     } else {
         artifact.parent().unwrap().join(std_object)
     };
+    let mut link = Command::new("cc");
+    link.arg(&object)
+        .arg(std_object)
+        .arg(&shim)
+        .arg(format!("-D{feature}"));
+    // Matches the compiler's own Linux link line; Darwin is always PIE.
+    if cfg!(target_os = "linux") {
+        link.arg("-no-pie");
+    }
     let linked = run_test_command(
-        Command::new("cc")
-            .arg(&object)
-            .arg(std_object)
-            .arg(&shim)
-            .arg(format!("-D{feature}"))
-            .arg("-no-pie")
-            .arg("-lm")
+        link.arg("-lm")
             .arg("-pthread")
             .arg("-o")
             .arg(&executable),

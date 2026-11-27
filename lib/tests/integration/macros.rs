@@ -175,8 +175,6 @@ macro secret
     assert!(private.contains("Unknown macro '%secret'"), "{private:?}");
 }
 
-// The fake proc-macro host is a shell script.
-#[cfg(unix)]
 fn proc_macro_host_with_response(
     response: rock_lib::macro_expansion::proc_macro::ProcMacroResponse,
 ) -> (
@@ -193,12 +191,24 @@ fn proc_macro_host_with_response(
         std::process::id()
     ));
     fs::create_dir_all(&temp_dir).unwrap();
-    let host = temp_dir.join("proc_macro_host");
+    // A fake host: it drains the request and replies with the `.response`
+    // file's bytes. PowerShell copies them exactly; cmd's `type` stops at 0x1A.
+    #[cfg(unix)]
+    let host = {
+        let host = temp_dir.join("proc_macro_host");
+        fs::write(&host, "#!/bin/sh\ncat >/dev/null\ncat \"$0.response\"\n").unwrap();
+        let mut permissions = fs::metadata(&host).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&host, permissions).unwrap();
+        host
+    };
+    #[cfg(windows)]
+    let host = {
+        let host = temp_dir.join("proc_macro_host.cmd");
+        fs::write(&host, "@powershell -NoProfile -Command \"[Console]::OpenStandardInput().CopyTo([IO.Stream]::Null); $b = [IO.File]::ReadAllBytes('%~dpn0.response'); $o = [Console]::OpenStandardOutput(); $o.Write($b, 0, $b.Length); $o.Flush()\"\r\n").unwrap();
+        host
+    };
     fs::write(host.with_extension("response"), response).unwrap();
-    fs::write(&host, "#!/bin/sh\ncat >/dev/null\ncat \"$0.response\"\n").unwrap();
-    let mut permissions = fs::metadata(&host).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(&host, permissions).unwrap();
 
     let artifact = rock_lib::macro_expansion::proc_macro::ProcMacroArtifact {
         artifact_format_version: rock_lib::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
@@ -307,7 +317,6 @@ fn encode_generated_main_tokens() -> Vec<u8> {
         .unwrap()
 }
 
-#[cfg(unix)]
 #[test]
 fn test_function_like_proc_macro_expands_through_public_macro_api() {
     let config = rock_lib::Config {

@@ -704,6 +704,7 @@ dependencies = [
  "paste",
  "rock-shared",
  "serde",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

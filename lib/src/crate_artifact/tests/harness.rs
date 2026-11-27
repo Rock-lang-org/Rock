@@ -1,13 +1,23 @@
 use super::*;
 
-// Descendant cleanup relies on Unix process groups.
-#[cfg(unix)]
+fn shell(unix: &str, windows: &str) -> Command {
+    if cfg!(windows) {
+        let mut command = Command::new("cmd");
+        command.args(["/C", windows]);
+        command
+    } else {
+        let mut command = Command::new("sh");
+        command.args(["-c", unix]);
+        command
+    }
+}
+
 #[test]
 fn bounded_runner_kills_descendants_holding_pipes_open() {
     let started = Instant::now();
     let result = std::panic::catch_unwind(|| {
-        let mut command = Command::new("sh");
-        command.args(["-c", "sleep 30 & wait"]);
+        // The shell waits on a descendant that holds the output pipes.
+        let mut command = shell("sleep 30 & wait", "powershell -NoProfile -Command Start-Sleep 30");
         run_test_command_with_timeout(&mut command, Duration::from_millis(100));
     });
 
@@ -18,13 +28,14 @@ fn bounded_runner_kills_descendants_holding_pipes_open() {
     );
 }
 
-// Descendant cleanup relies on Unix process groups.
-#[cfg(unix)]
 #[test]
 fn bounded_runner_kills_descendants_after_parent_exits() {
     let started = Instant::now();
-    let mut command = Command::new("sh");
-    command.args(["-c", "sleep 2 & exit 7"]);
+    // The shell exits while a background descendant still holds the pipes.
+    let mut command = shell(
+        "sleep 2 & exit 7",
+        "start /B powershell -NoProfile -Command Start-Sleep 2 & exit 7",
+    );
     let output = run_test_command_with_timeout(&mut command, Duration::from_secs(5));
 
     assert_eq!(output.status.code(), Some(7));

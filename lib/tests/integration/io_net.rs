@@ -1,18 +1,25 @@
 use crate::support::*;
 use std::sync::atomic::Ordering;
 
-// Uses glibc's __errno_location binding from std::ffi::libc.
-#[cfg(target_os = "linux")]
+// Winsock reports socket errors through WSAGetLastError, not errno.
+#[cfg(unix)]
 #[test]
 fn test_socket_posix_ffi_surface_compiles_and_returns_errno() {
     let output = compile_and_run(
         r#"
 > std::ffi::libc::socket
 > std::ffi::libc::close
-> std::ffi::libc::__errno_location
+
+cfg(target_os = "linux")
+    > std::ffi::libc::__errno_location
+    errno_slot = -> __errno_location!
+
+cfg(target_os = "macos")
+    > std::ffi::libc::__error
+    errno_slot = -> __error!
 
 last_errno = ->
-    ptr = __errno_location!
+    ptr = errno_slot!
     unsafe *ptr
 main = ->
     fd = socket (-1), 1, 0

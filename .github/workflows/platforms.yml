@@ -42,10 +42,12 @@ jobs:
           # Official LLVM release: llvm-config, static libraries and every
           # backend, so cross-target tests (AArch64 Darwin) run here too.
           curl -fsSL -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-pc-windows-msvc.tar.xz
-          mkdir -p "$RUNNER_TEMP/llvm"
-          tar -xJf llvm.tar.xz -C "$RUNNER_TEMP/llvm" --strip-components=1
-          test -x "$RUNNER_TEMP/llvm/bin/llvm-config.exe"
-          echo "LLVM_SYS_180_PREFIX=$(cd "$RUNNER_TEMP/llvm" && pwd -W)" >> "$GITHUB_ENV"
+          # GNU tar reads "D:" as a remote host: give it a POSIX path.
+          llvm="$(cygpath -u "$RUNNER_TEMP")/llvm"
+          mkdir -p "$llvm"
+          tar -xJf llvm.tar.xz -C "$llvm" --strip-components=1
+          test -x "$llvm/bin/llvm-config.exe"
+          echo "LLVM_SYS_180_PREFIX=$(cd "$llvm" && pwd -W)" >> "$GITHUB_ENV"
 
       # Puts MSVC's link.exe and the CRT/SDK libraries on PATH and LIB for
       # rockc's linker invocation.

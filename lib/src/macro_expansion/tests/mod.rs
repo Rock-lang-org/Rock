@@ -6,12 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod diagnostics;
 mod matching;
-// The fake proc-macro host is a shell script.
-#[cfg(unix)]
 mod proc_macros;
 mod repetition;
 
-#[cfg(unix)]
 fn proc_macro_artifact_with_response(
     macro_name: &str,
     response: proc_macro::ProcMacroResponse,
@@ -27,18 +24,9 @@ fn proc_macro_artifact_with_response(
         nonce
     ));
     fs::create_dir_all(&temp_dir).unwrap();
-    let host = temp_dir.join("proc_macro_host");
+    let host = temp_dir.join(fake_host_name());
     fs::write(host.with_extension("response"), response).unwrap();
-    // Write the executable from a child process: a write fd opened here could
-    // leak into another test thread's fork and make exec fail with ETXTBSY.
-    let status = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("printf '#!/bin/sh\\ncat >/dev/null\\ncat \"$0.response\"\\n' > \"$1\" && chmod 755 \"$1\"")
-        .arg("sh")
-        .arg(&host)
-        .status()
-        .unwrap();
-    assert!(status.success());
+    write_fake_host(&host);
 
     let artifact = proc_macro::ProcMacroArtifact {
         artifact_format_version: crate::products::PRODUCT_ARTIFACT_FORMAT_VERSION,
@@ -103,4 +91,34 @@ fn assert_expands_to(input: &str, expected: &str) {
 // /private, and Windows' may use 8.3 short names.
 fn canonical_temp_dir() -> std::path::PathBuf {
     dunce::canonicalize(std::env::temp_dir()).unwrap()
+}
+
+// A fake proc-macro host: it drains the request and replies with the bytes
+// of the `.response` file next to it.
+fn fake_host_name() -> &'static str {
+    if cfg!(windows) {
+        "proc_macro_host.cmd"
+    } else {
+        "proc_macro_host"
+    }
+}
+
+#[cfg(unix)]
+fn write_fake_host(host: &std::path::Path) {
+    // Write the executable from a child process: a write fd opened here could
+    // leak into another test thread's fork and make exec fail with ETXTBSY.
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("printf '#!/bin/sh\\ncat >/dev/null\\ncat \"$0.response\"\\n' > \"$1\" && chmod 755 \"$1\"")
+        .arg("sh")
+        .arg(host)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+// PowerShell copies the response byte for byte; cmd's `type` would stop at 0x1A.
+#[cfg(windows)]
+fn write_fake_host(host: &std::path::Path) {
+    fs::write(host, "@powershell -NoProfile -Command \"[Console]::OpenStandardInput().CopyTo([IO.Stream]::Null); $b = [IO.File]::ReadAllBytes('%~dpn0.response'); $o = [Console]::OpenStandardOutput(); $o.Write($b, 0, $b.Length); $o.Flush()\"\r\n").unwrap();
 }
