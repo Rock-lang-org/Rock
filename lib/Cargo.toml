@@ -6,6 +6,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+dunce = "1.0"
 ariadne = { workspace = true }
 paste = { workspace = true }
 inkwell = { workspace = true }

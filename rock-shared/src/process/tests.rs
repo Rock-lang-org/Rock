@@ -7,7 +7,7 @@ fn test_dev_target_binary_from_test_binary_uses_profile_dir() {
 
     assert_eq!(
         dev_target_binary_from_exe(&current, "rockc").unwrap(),
-        PathBuf::from("/workspace/target/debug/rockc")
+        PathBuf::from("/workspace/target/debug").join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
     );
 }
 
@@ -17,7 +17,7 @@ fn test_dev_target_binary_from_binary_uses_same_directory() {
 
     assert_eq!(
         dev_target_binary_from_exe(&current, "rockc").unwrap(),
-        PathBuf::from("/workspace/target/release/rockc")
+        PathBuf::from("/workspace/target/release").join(format!("rockc{}", std::env::consts::EXE_SUFFIX))
     );
 }
 
@@ -49,7 +49,7 @@ fn test_dev_target_binary_from_unrelated_out_directory_stays_adjacent() {
 fn test_dev_target_binary_uses_invocation_path_when_current_exe_is_sandboxed() {
     let base = std::env::temp_dir().join(format!("rock-process-test-{}", std::process::id()));
     let profile_dir = base.join("target/debug");
-    let rockc = profile_dir.join("rockc");
+    let rockc = profile_dir.join(format!("rockc{}", std::env::consts::EXE_SUFFIX));
     fs::create_dir_all(&profile_dir).unwrap();
     fs::write(&rockc, b"").unwrap();
 

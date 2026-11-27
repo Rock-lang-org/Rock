@@ -44,7 +44,7 @@ pub(crate) fn install_toolchain(
     let destination = home.toolchain_dir(name)?;
     let should_set_default =
         !home.default_toolchain_file().exists() && installed_toolchain_names(home)?.is_empty();
-    let source = source.canonicalize().map_err(|e| {
+    let source = dunce::canonicalize(&source).map_err(|e| {
         format!(
             "Failed to resolve source toolchain directory {}: {}",
             source.display(),

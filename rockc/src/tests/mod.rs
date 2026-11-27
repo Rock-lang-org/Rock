@@ -41,7 +41,7 @@ fn product_artifact(
 }
 
 fn artifact_deps_test_dir(name: &str) -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_artifact_deps_{}_{}",
         std::process::id(),
         name
@@ -84,4 +84,10 @@ fn diagnostic_messages(diagnostics: rock_lib::diagnostic::Diagnostics) -> String
         .map(|diagnostic| diagnostic.message.as_str())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

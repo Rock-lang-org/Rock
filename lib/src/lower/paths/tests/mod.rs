@@ -34,7 +34,7 @@ fn lower_source_for_test(
     source: &str,
 ) -> Result<crate::infer::PartialHir, Vec<crate::lower::error::ResolveError>> {
     let id = LOWER_PATH_TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
+    let dir = canonical_temp_dir().join(format!(
         "rock_lower_path_hir_ref_test_{}_{}",
         std::process::id(),
         id
@@ -145,4 +145,10 @@ fn empty_struct(id: DefId, name: &str) -> HirStruct {
         generic_params: Vec::new(),
         fields: Vec::new(),
     }
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

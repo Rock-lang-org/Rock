@@ -22,7 +22,7 @@ fn workspace_std_root() -> Result<Option<PathBuf>, String> {
         return Ok(None);
     }
 
-    std_root.canonicalize().map(Some).map_err(|e| {
+    dunce::canonicalize(&std_root).map(Some).map_err(|e| {
         format!(
             "Failed to resolve bundled std at {}: {}",
             std_root.display(),

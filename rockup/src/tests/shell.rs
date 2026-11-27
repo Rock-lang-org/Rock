@@ -92,6 +92,8 @@ fn test_ensure_shell_config_is_idempotent() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
+// Expects the home path verbatim; on Windows the shell escaping doubles its backslashes.
+#[cfg(unix)]
 #[test]
 fn test_ensure_shell_config_uses_custom_rockup_home() {
     let temp_dir = temp_test_dir("shell_config_custom_home");

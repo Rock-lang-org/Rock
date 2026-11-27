@@ -207,7 +207,7 @@ fn archive_listing_rejects_traversal_links_and_escaped_names() {
 
 #[test]
 fn publication_rolls_back_and_staging_excludes_concurrent_operations() {
-    let root = std::env::temp_dir().join(format!("rockup-rollback-{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rockup-rollback-{}", std::process::id()));
     fs::create_dir_all(&root).unwrap();
     let mut stage = Stage::new(&root, "test").unwrap();
     assert!(Stage::new(&root, "test").is_err());
@@ -227,4 +227,10 @@ fn publication_rolls_back_and_staging_excludes_concurrent_operations() {
     drop(stage);
     assert!(!root.join(".rockup-test").exists());
     fs::remove_dir_all(root).unwrap();
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

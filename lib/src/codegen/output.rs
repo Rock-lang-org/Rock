@@ -194,7 +194,13 @@ fn linker_invocation(
             out.push(output_path);
             LinkerInvocation {
                 program: override_linker.unwrap_or_else(|| "link.exe".into()),
-                leading: vec!["/NOLOGO".into(), out, "/SUBSYSTEM:CONSOLE".into()],
+                // 8 MiB main-thread stack, as on Linux; link.exe defaults to 1 MiB.
+                leading: vec![
+                    "/NOLOGO".into(),
+                    out,
+                    "/SUBSYSTEM:CONSOLE".into(),
+                    "/STACK:8388608".into(),
+                ],
                 trailing: os_args(&["libcmt.lib", "ws2_32.lib", "kernel32.lib", "shell32.lib"]),
             }
         }

@@ -118,7 +118,7 @@ fn regression_pruned_variant_exports_do_not_break_library_products() {
         path: "/virtual/dead_code/inner.rk".into(),
         text: "enum Private\n    Hidden\n< Private::Hidden\n".into(),
     });
-    let dir = std::env::temp_dir().join(format!("rock_variant_exports_{}", std::process::id()));
+    let dir = canonical_temp_dir().join(format!("rock_variant_exports_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     config.output_dir = dir.clone();
     let result = compile_with_products(&config);
@@ -221,7 +221,7 @@ fn suppression_does_not_prevent_pruning_and_analysis_keeps_source_items() {
         .unwrap();
     let analysis = analyze(&config).unwrap();
     assert_eq!(analysis.hir.program.functions.len(), 3);
-    let dir = std::env::temp_dir().join(format!("rock_dead_code_{}", std::process::id()));
+    let dir = canonical_temp_dir().join(format!("rock_dead_code_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     config.output_dir = dir.clone();
     config.emit_llvm = true;
@@ -243,4 +243,10 @@ fn suppression_does_not_prevent_pruning_and_analysis_keeps_source_items() {
     assert!(!ir.contains("unused"));
     assert!(!ir.contains("_helper"));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

@@ -53,7 +53,7 @@ pub(crate) fn add_target_component_from_dir(
 }
 
 pub(crate) fn detect_target_component_source(path: &Path, triple: &str) -> Result<PathBuf, String> {
-    let path = path.canonicalize().map_err(|e| {
+    let path = dunce::canonicalize(&path).map_err(|e| {
         format!(
             "Failed to resolve target component source {}: {}",
             path.display(),

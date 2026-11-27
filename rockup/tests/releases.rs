@@ -17,7 +17,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let root = std::env::temp_dir().join(format!(
+        let root = canonical_temp_dir().join(format!(
             "rockup-release-cli-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -532,4 +532,10 @@ fn self_update_is_atomic_and_keeps_shim_destination() {
         shim
     );
     assert!(!fixture.root.join("home/bin/.rockup-self-update").exists());
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

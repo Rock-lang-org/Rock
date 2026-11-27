@@ -1,6 +1,7 @@
 // Show trait - provides string representation and printing for types
 
 > std::ffi::libc::putchar
+> std::sys::stdout_prepare
 > std::convert::int_to_string
 > std::convert::float_to_string
 > std::string::owned::String
@@ -87,6 +88,7 @@ impl Show for &Str
         value = *self
         ptr = value.as_ptr!
         len = value.len!
+        stdout_prepare!
         i = 0
         while i < len
             putchar ((unsafe ptr[i]) as I32)

@@ -47,7 +47,7 @@ fn test_multiple_binaries_with_or_without_a_library_build_in_both_profiles() {
                     binary.path,
                     root.join("build")
                         .join(profile.directory())
-                        .join(&binary.name)
+                        .join(exe(&binary.name))
                 );
                 assert_executable_exit_code(&binary.path, expected);
                 assert_eq!(
@@ -80,7 +80,7 @@ fn test_run_requires_a_known_binary_when_multiple_targets_exist() {
             .unwrap(),
         40
     );
-    assert!(!root.join("build/debug/client").exists());
+    assert!(!root.join("build").join("debug").join(exe("client")).exists());
     assert!(
         crate::build::build_project_for_target(&root, BuildProfile::Debug, Vec::new(), None)
             .is_err()
@@ -160,8 +160,8 @@ fn test_cli_build_lists_all_products_and_run_selects_a_binary() {
                 .artifact_path()
                 .display()
                 .to_string(),
-            root.join("build/debug/server").display().to_string(),
-            root.join("build/debug/client").display().to_string(),
+            root.join("build").join("debug").join(exe("server")).display().to_string(),
+            root.join("build").join("debug").join(exe("client")).display().to_string(),
         ]
     );
     assert!(String::from_utf8_lossy(&output.stderr).contains("3/3 crates · 100%"));
@@ -326,7 +326,7 @@ fn test_binary_target_requires_main_function() {
     write_package_with_options(&root, "app", "src/main.rk", &[], "< answer = -> 42\n", true);
     let error = build_project(&root, BuildProfile::Debug).unwrap_err();
     assert!(error.contains("main"), "{error}");
-    assert!(!root.join("build/debug/app").exists());
+    assert!(!root.join("build").join("debug").join(exe("app")).exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -367,7 +367,7 @@ fn test_debug_and_release_builds_keep_transitive_dependency_caches_separate() {
         let executable = build_project(&app, profile).unwrap();
         assert_eq!(
             executable,
-            app.join("build").join(profile.directory()).join("app")
+            app.join("build").join(profile.directory()).join(exe("app"))
         );
         assert_executable_exit_code(&executable, 42);
         for root in [&dep_a, &dep_b] {
@@ -649,4 +649,8 @@ fn test_shared_build_cache_distinguishes_same_name_and_version_at_different_path
     assert_ne!(products[0], products[1]);
     assert_eq!(products[0], products[2]);
     fs::remove_dir_all(root).unwrap();
+}
+
+fn exe(name: &str) -> String {
+    format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }

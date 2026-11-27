@@ -274,7 +274,7 @@ fn collect_preserves_non_std_prelude_capability_without_unqualified_injection() 
 
 #[test]
 fn collect_resolves_local_import_aliases_to_canonical_def_ids() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_canonical_import_aliases_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -315,7 +315,7 @@ fn collect_resolves_local_import_aliases_to_canonical_def_ids() {
 
 #[test]
 fn collect_records_import_alias_for_signature_only_declaration() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_signature_import_alias_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -347,7 +347,7 @@ fn collect_records_import_alias_for_signature_only_declaration() {
 
 #[test]
 fn collect_binds_import_of_item_declared_in_a_later_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_late_import_alias_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -388,7 +388,7 @@ fn collect_binds_import_of_item_declared_in_a_later_module() {
 
 #[test]
 fn collect_skips_non_explicit_glob_import_aliases_in_canonical_import_table() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_non_explicit_glob_aliases_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -420,7 +420,7 @@ fn collect_skips_non_explicit_glob_import_aliases_in_canonical_import_table() {
 
 #[test]
 fn collect_resolves_explicit_type_import_aliases_to_canonical_def_ids() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_canonical_type_import_aliases_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -455,7 +455,7 @@ fn collect_resolves_explicit_type_import_aliases_to_canonical_def_ids() {
 
 #[test]
 fn collect_resolves_export_function_aliases_to_canonical_def_ids() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_canonical_export_aliases_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -502,7 +502,7 @@ fn collect_resolves_export_function_aliases_to_canonical_def_ids() {
 
 #[test]
 fn collect_resolves_export_type_aliases_to_canonical_def_ids() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_canonical_export_type_aliases_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -547,7 +547,7 @@ fn collect_resolves_export_type_aliases_to_canonical_def_ids() {
 
 #[test]
 fn lowered_hir_indexes_import_and_export_aliases_by_canonical_def_id() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_canonical_alias_indexes_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -685,7 +685,7 @@ fn collect_preserves_import_aliases_infix_precedence_and_function_signatures() {
 
 #[test]
 fn lower_from_declarations_resolves_nested_imported_types_inside_inline_module_bodies() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_nested_source_backed_type_context_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -770,4 +770,10 @@ fn lower_from_declarations_resolves_nested_imported_types_inside_inline_module_b
     );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

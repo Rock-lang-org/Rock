@@ -6,6 +6,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+dunce = "1.0"
 rock-shared = { path = "../rock-shared", features = ["manifest", "sysroot", "fs", "process"] }
 
 clap = { workspace = true }

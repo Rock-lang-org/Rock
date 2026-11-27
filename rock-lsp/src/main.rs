@@ -346,8 +346,7 @@ type AnalysisResult = std::result::Result<Arc<Analysis>, Diagnostics>;
 
 fn source_in_scope(path: &Path, source_root: &Path) -> bool {
     path.starts_with(source_root)
-        || path
-            .canonicalize()
+        || dunce::canonicalize(&path)
             .is_ok_and(|path| path.starts_with(source_root))
 }
 

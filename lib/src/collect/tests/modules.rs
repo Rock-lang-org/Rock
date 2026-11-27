@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn collect_uses_source_graph_for_source_backed_modules() {
     let temp_dir =
-        std::env::temp_dir().join(format!("rock_collect_source_graph_{}", std::process::id()));
+        canonical_temp_dir().join(format!("rock_collect_source_graph_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
     let entry = temp_dir.join("main.rk");
@@ -40,7 +40,7 @@ fn collect_uses_source_graph_for_source_backed_modules() {
 
 #[test]
 fn collect_uses_source_graph_path_for_directory_modules() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_source_graph_dir_{}",
         std::process::id()
     ));
@@ -90,7 +90,7 @@ fn collect_uses_source_graph_path_for_directory_modules() {
 
 #[test]
 fn nested_modules_resolve_later_nominals_and_collect_private_children() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_nested_nominals_{}",
         std::process::id()
     ));
@@ -168,7 +168,7 @@ fn ident_expr(name: &str) -> crate::ast::Expression {
 
 #[test]
 fn collect_indexes_loaded_source_backed_module_bodies() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_item_index_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -200,7 +200,7 @@ fn collect_indexes_loaded_source_backed_module_bodies() {
 
 #[test]
 fn collect_indexes_source_backed_module_nested_inside_inline_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_nested_item_index_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -242,7 +242,7 @@ fn collect_indexes_source_backed_module_nested_inside_inline_module() {
 
 #[test]
 fn collect_indexes_current_crate_prefixed_source_backed_module_inside_inline_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_current_crate_nested_item_index_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -289,7 +289,7 @@ fn collect_indexes_current_crate_prefixed_source_backed_module_inside_inline_mod
 
 #[test]
 fn collect_gathers_local_inline_and_source_backed_declarations_without_lowerer_collect() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_local_only_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -343,7 +343,7 @@ fn collect_gathers_local_inline_and_source_backed_declarations_without_lowerer_c
 
 #[test]
 fn collect_preserves_source_backed_module_function_qualification_and_import_aliases() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_source_backed_function_alias_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -386,7 +386,7 @@ fn collect_preserves_source_backed_module_function_qualification_and_import_alia
 
 #[test]
 fn collect_resolves_source_backed_forward_sibling_trait_imports_in_impls() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_source_backed_forward_trait_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -434,7 +434,7 @@ fn collect_resolves_source_backed_forward_sibling_trait_imports_in_impls() {
 
 #[test]
 fn collect_preserves_source_backed_parent_export_references_for_nested_modules() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_source_backed_parent_export_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -462,7 +462,7 @@ fn collect_preserves_source_backed_parent_export_references_for_nested_modules()
 
 #[test]
 fn collect_keeps_nested_source_backed_imports_out_of_global_aliases() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_nested_source_backed_context_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -536,7 +536,7 @@ fn collect_keeps_nested_source_backed_imports_out_of_global_aliases() {
 
 #[test]
 fn lower_from_declarations_resolves_nested_source_backed_imports_inside_inline_module_bodies() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_nested_source_backed_context_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -701,4 +701,10 @@ fn collect_keeps_inline_qualified_aliases_in_local_namespace() {
     assert!(function_named(&decls, "sum").is_some());
     assert!(function_named(&decls, "math::sum").is_some());
     assert!(function_named(&decls, "test::math::sum").is_none());
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

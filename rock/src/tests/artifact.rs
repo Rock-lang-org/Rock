@@ -540,7 +540,7 @@ main = ->
 
 #[test]
 fn validation_stamp_resolves_bare_rockc_and_keys_artifact_content() {
-    let dir = std::env::temp_dir().join(format!("rock_validation_stamp_{}", std::process::id()));
+    let dir = canonical_temp_dir().join(format!("rock_validation_stamp_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let artifact = dir.join("dep.rkca");
@@ -563,4 +563,10 @@ fn validation_stamp_resolves_bare_rockc_and_keys_artifact_content() {
     // Same length and timestamp, different bytes: a restored corrupt file.
     assert_ne!(stamp_of(b"good"), stamp_of(b"bad!"));
     let _ = fs::remove_dir_all(&dir);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

@@ -99,6 +99,8 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+// Runs a fake toolchain binary written as a shell script.
+#[cfg(unix)]
 #[test]
 fn test_package_dev_std_passes_absolute_product_paths_for_relative_sysroot() {
     let temp_dir = temp_test_dir("package_dev_std_relative_sysroot");

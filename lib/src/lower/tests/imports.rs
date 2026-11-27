@@ -128,7 +128,7 @@ fn trait_by_name_prefers_resolver_alias_id() {
 
 #[test]
 fn lower_uses_canonical_current_crate_import_aliases() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_canonical_import_alias_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -186,7 +186,7 @@ fn lower_uses_canonical_current_crate_import_aliases() {
 #[test]
 fn lower_loaded_module_bodies_preserves_paths_for_directory_glob_imports() {
     let temp_dir =
-        std::env::temp_dir().join(format!("rock_lower_loaded_dir_glob_{}", std::process::id()));
+        canonical_temp_dir().join(format!("rock_lower_loaded_dir_glob_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(temp_dir.join("helper")).unwrap();
     let entry = temp_dir.join("main.rk");
@@ -257,7 +257,7 @@ fn lower_loaded_module_bodies_preserves_paths_for_directory_glob_imports() {
 
 #[test]
 fn glob_import_targets_uses_cached_nested_source_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_nested_glob_cache_{}",
         std::process::id()
     ));
@@ -553,4 +553,10 @@ fn injected_prelude_function_alias_remains_id_backed_view() {
         lowerer.items.function(prelude_id).unwrap().body.stmts.len(),
         1
     );
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

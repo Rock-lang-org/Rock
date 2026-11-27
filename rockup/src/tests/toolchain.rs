@@ -215,6 +215,8 @@ fn test_list_toolchains_marks_active_default() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
+// Runs a fake toolchain binary written as a shell script.
+#[cfg(unix)]
 #[test]
 fn test_run_toolchain_command_prefers_toolchain_bin_in_path() {
     let temp_dir = temp_test_dir("run_toolchain_command");
@@ -237,6 +239,8 @@ fn test_run_toolchain_command_prefers_toolchain_bin_in_path() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
+// Runs a fake toolchain binary written as a shell script.
+#[cfg(unix)]
 #[test]
 fn test_proxy_toolchain_command_uses_default_selection() {
     let temp_dir = temp_test_dir("proxy_command");
@@ -252,6 +256,8 @@ fn test_proxy_toolchain_command_uses_default_selection() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
+// Runs a fake toolchain binary written as a shell script.
+#[cfg(unix)]
 #[test]
 fn test_proxy_toolchain_command_supports_rock_lsp() {
     let temp_dir = temp_test_dir("proxy_lsp_command");
@@ -267,6 +273,8 @@ fn test_proxy_toolchain_command_supports_rock_lsp() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
+// Runs a fake toolchain binary written as a shell script.
+#[cfg(unix)]
 #[test]
 fn test_proxy_toolchain_command_uses_project_pin() {
     let temp_dir = temp_test_dir("proxy_project_pin");
@@ -298,6 +306,8 @@ fn test_proxy_toolchain_command_uses_project_pin() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
+// Runs a fake toolchain binary written as a shell script.
+#[cfg(unix)]
 #[test]
 fn test_run_command_sets_env_selected_toolchain() {
     let temp_dir = temp_test_dir("run_env_toolchain");

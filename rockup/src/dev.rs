@@ -86,7 +86,7 @@ pub(crate) fn package_dev_std(
     copy_source: bool,
     rockc: Option<&Path>,
 ) -> Result<PathBuf, String> {
-    let std_root = std_root.canonicalize().map_err(|e| {
+    let std_root = dunce::canonicalize(&std_root).map_err(|e| {
         format!(
             "Failed to resolve std source directory {}: {}",
             std_root.display(),
@@ -108,7 +108,7 @@ pub(crate) fn package_dev_std(
             e
         )
     })?;
-    let sysroot_root = sysroot_root.canonicalize().map_err(|e| {
+    let sysroot_root = dunce::canonicalize(&sysroot_root).map_err(|e| {
         format!(
             "Failed to resolve dev sysroot root {}: {}",
             sysroot_root.display(),

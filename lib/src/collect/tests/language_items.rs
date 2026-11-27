@@ -50,7 +50,7 @@ fn resolver_contract_keeps_same_name_module_items_qualified_by_id() {
 
 #[test]
 fn collect_artifact_declarations_does_not_collect_unreferenced_same_named_sibling_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_artifact_same_named_sibling_{}",
         std::process::id()
     ));
@@ -605,7 +605,7 @@ fn collect_reports_each_missing_try_protocol_component_deterministically() {
 
 #[test]
 fn collect_binds_complete_try_protocol_across_inline_and_source_modules() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_language_items_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -804,4 +804,10 @@ fn collect_rejects_language_item_marker_with_missing_member_target() {
             ),
         ],
     );
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

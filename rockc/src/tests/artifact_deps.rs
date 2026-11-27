@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_print_artifact_deps_reports_transitive_dependency_capabilities() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_artifact_deps_{}_{}",
         std::process::id(),
         "transitive_capabilities"
@@ -244,4 +244,10 @@ fn test_print_artifact_deps_rejects_inconsistent_dependency_identity_metadata() 
     assert!(messages.contains("identity metadata that does not match"));
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

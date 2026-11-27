@@ -567,9 +567,7 @@ fn install_archive(
 
 pub(crate) fn self_update() -> Result<(), String> {
     check_platform()?;
-    let executable = std::env::current_exe()
-        .map_err(|e| e.to_string())?
-        .canonicalize()
+    let executable = dunce::canonicalize(std::env::current_exe().map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let parent = executable
         .parent()

@@ -300,7 +300,7 @@ pub(super) fn valid_products() -> CompilerProducts {
 
 pub(super) fn assert_loader_error_in_both_modes(products: &CompilerProducts, expected: &str) {
     let case_id = ARTIFACT_CASE_ID.fetch_add(1, Ordering::SeqCst);
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_language_item_loader_{}_{}",
         std::process::id(),
         case_id
@@ -336,4 +336,10 @@ pub(super) fn assert_loader_error_in_both_modes(products: &CompilerProducts, exp
     }
 
     let _ = std::fs::remove_dir_all(base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

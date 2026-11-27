@@ -32,7 +32,7 @@ fn ident_pattern(name: &str, mutable: bool) -> ast::Pattern {
 
 fn compile_source_to_resolved_hir_for_test(source: &str) -> ResolvedHirProgram {
     let id = LOWER_PATTERN_TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
+    let dir = canonical_temp_dir().join(format!(
         "rock_lower_pattern_hir_ref_test_{}_{}",
         std::process::id(),
         id
@@ -507,4 +507,10 @@ fn qualified_named_enum_field_pattern_rejects_unknown_field() {
         "expected unknown field diagnostic, got {:?}",
         lowerer.diagnostics.errors()
     );
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

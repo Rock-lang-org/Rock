@@ -13,7 +13,7 @@ pub(super) fn workspace_root() -> PathBuf {
 
 pub(super) fn temp_test_dir(name: &str) -> PathBuf {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
+    let dir = canonical_temp_dir().join(format!(
         "rock_artifact_{}_{}_{}",
         name,
         std::process::id(),
@@ -375,7 +375,7 @@ pub(super) fn shared_std_product_artifact() -> PathBuf {
         .get_or_init(|| {
             let std_dir = workspace_root().join("std");
             let key = std_cache_key(&std_dir, &std_cache_compiler_stamp());
-            let artifact_dir = std::env::temp_dir().join(format!("rock_artifact_std_{key}"));
+            let artifact_dir = canonical_temp_dir().join(format!("rock_artifact_std_{key}"));
             cached_std_product_artifact(&std_dir, &artifact_dir)
         })
         .clone()
@@ -529,4 +529,10 @@ pub(super) fn compile_and_run_artifact_app(
         String::from_utf8(output.stdout).expect("artifact app stdout must be UTF-8"),
         output.status.code().unwrap_or(1),
     )
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

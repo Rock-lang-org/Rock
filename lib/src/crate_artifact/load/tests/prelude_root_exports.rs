@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn load_product_artifact_records_root_export_ids() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "root_export_ids"
@@ -33,7 +33,7 @@ fn load_product_artifact_records_root_export_ids() {
 
 #[test]
 fn load_product_artifact_qualifies_method_like_root_export_sources() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "method_like_root_export"
@@ -120,7 +120,7 @@ fn load_product_artifact_qualifies_method_like_root_export_sources() {
 
 #[test]
 fn load_product_artifact_rejects_root_export_without_canonical_id() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "bad_root_export_id"
@@ -162,7 +162,7 @@ fn load_product_artifact_rejects_root_export_without_canonical_id() {
 
 #[test]
 fn load_product_artifact_rejects_root_export_without_display_name() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "bad_root_export_display_name"
@@ -200,7 +200,7 @@ fn load_product_artifact_rejects_root_export_without_display_name() {
 
 #[test]
 fn load_product_artifact_records_id_backed_prelude_exports() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "id_backed_prelude_exports"
@@ -262,7 +262,7 @@ fn load_product_artifact_records_id_backed_prelude_exports() {
 
 #[test]
 fn load_product_artifact_rejects_prelude_export_id_without_display_name() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "bad_id_backed_prelude_export"
@@ -315,7 +315,7 @@ fn load_product_artifact_rejects_prelude_export_id_without_display_name() {
 
 #[test]
 fn load_product_artifact_rejects_sidecar_id_backed_prelude_export() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "sidecar_id_backed_prelude_export"
@@ -395,7 +395,7 @@ fn load_product_artifact_rejects_sidecar_id_backed_prelude_export() {
 
 #[test]
 fn load_product_artifact_derives_missing_prelude_exports_from_prelude_items() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "derived_prelude_exports"
@@ -454,4 +454,10 @@ fn load_product_artifact_derives_missing_prelude_exports_from_prelude_items() {
     assert_eq!(prelude_export.id, exported_struct.id);
 
     let _ = fs::remove_dir_all(base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

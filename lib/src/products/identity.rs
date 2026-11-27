@@ -19,8 +19,7 @@ pub(crate) fn product_dependencies_from_config(config: &Config) -> Vec<ProductDe
 }
 
 fn canonical_product_dependency_artifact_path(artifact_path: &Path) -> PathBuf {
-    artifact_path
-        .canonicalize()
+    dunce::canonicalize(artifact_path)
         .unwrap_or_else(|_| absolute_product_dependency_artifact_path(artifact_path))
 }
 

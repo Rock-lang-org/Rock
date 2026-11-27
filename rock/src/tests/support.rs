@@ -104,11 +104,10 @@ pub(crate) fn run_isolated_test(name: &str, env: &[(&str, &OsStr)]) -> bool {
 pub(crate) fn temp_test_dir(name: &str) -> PathBuf {
     prepare_dev_tools();
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("rock_cli_{}_{}_{}", name, std::process::id(), id));
+    let dir = canonical_temp_dir().join(format!("rock_cli_{}_{}_{}", name, std::process::id(), id));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    // Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
-    if cfg!(unix) { dir.canonicalize().unwrap() } else { dir }
+    dir
 }
 
 pub(crate) fn write_package(
@@ -142,7 +141,7 @@ pub(crate) fn write_package_with_options(
     if !deps.is_empty() {
         manifest.push_str("\n[dependencies]\n");
         for (dep_name, dep_path) in deps {
-            manifest.push_str(&format!("{} = {{ path = \"{}\" }}\n", dep_name, dep_path));
+            manifest.push_str(&format!("{} = {{ path = '{}' }}\n", dep_name, dep_path));
         }
     }
 
@@ -284,4 +283,10 @@ fn test_run_command_output_captures_child_stdout_and_stderr() {
     assert_eq!(output.status.code(), Some(3));
     assert_eq!(String::from_utf8_lossy(&output.stdout), "visible-stdout");
     assert_eq!(String::from_utf8_lossy(&output.stderr), "visible-stderr");
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

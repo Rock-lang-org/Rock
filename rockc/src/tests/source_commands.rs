@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_source_command_parse_errors_are_structured_diagnostics() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_source_command_diagnostics_{}",
         std::process::id()
     ));
@@ -33,7 +33,7 @@ fn test_source_command_parse_errors_are_structured_diagnostics() {
 #[test]
 fn test_run_config_expands_entry_file_without_compiling() {
     let base =
-        std::env::temp_dir().join(format!("rockc_expand_{}_{}", std::process::id(), "entry"));
+        canonical_temp_dir().join(format!("rockc_expand_{}_{}", std::process::id(), "entry"));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let entry_file = base.join("main.rk");
@@ -82,4 +82,10 @@ fn source_command_loader_keeps_virtual_source_for_diagnostic_attachment() {
     sources.attach(&mut diagnostic);
 
     assert_eq!(diagnostic.source.as_ref().unwrap().text, text);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

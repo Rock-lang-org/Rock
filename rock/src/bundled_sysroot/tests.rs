@@ -13,7 +13,7 @@ static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn write_complete_sysroot_std(artifact_format_version: &str) -> (PathBuf, SysrootLayout) {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let root = std::env::temp_dir().join(format!(
+    let root = canonical_temp_dir().join(format!(
         "rock_cli_sysroot_format_{}_{}",
         std::process::id(),
         id
@@ -105,4 +105,10 @@ fn test_dev_sysroot_std_without_release_profile_is_rebuilt() {
     assert!(sysroot_std_is_fresh(&layout, Some(&std_root)).unwrap());
 
     let _ = fs::remove_dir_all(root);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

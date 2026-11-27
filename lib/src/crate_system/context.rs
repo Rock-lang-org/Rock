@@ -309,7 +309,7 @@ impl CrateContext {
             for (dep_name, dep) in deps {
                 let dep_path = if let Some(ref path) = dep.path {
                     if path.starts_with("..") || path.starts_with(".") {
-                        crate_dir.join(path).canonicalize().map_err(|e| {
+                        dunce::canonicalize(crate_dir.join(path)).map_err(|e| {
                             toolchain_diagnostics(format!(
                                 "Failed to resolve path '{}': {}",
                                 path, e

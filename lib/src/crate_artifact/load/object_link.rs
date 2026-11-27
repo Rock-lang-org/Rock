@@ -175,7 +175,7 @@ pub(super) fn resolve_product_object_path(
         ));
     }
 
-    Ok(candidate.canonicalize().unwrap_or(candidate))
+    Ok(dunce::canonicalize(&candidate).unwrap_or(candidate))
 }
 
 fn resolve_relative_product_object_path(

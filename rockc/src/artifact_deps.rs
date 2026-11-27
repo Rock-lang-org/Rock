@@ -334,7 +334,7 @@ fn artifact_paths_match(left: &Path, right: &Path) -> bool {
         return true;
     }
 
-    match (left.canonicalize(), right.canonicalize()) {
+    match (dunce::canonicalize(&left), dunce::canonicalize(&right)) {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
     }

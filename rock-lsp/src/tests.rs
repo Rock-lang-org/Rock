@@ -12,11 +12,11 @@ use super::{
 
 #[test]
 fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
-    let entry = PathBuf::from("/virtual/main.rk");
-    let other_entry = PathBuf::from("/virtual/other.rk");
+    let entry = virtual_path("main.rk");
+    let other_entry = virtual_path("other.rk");
     let trigger = Url::from_file_path(&entry).unwrap();
     let other_trigger = Url::from_file_path(&other_entry).unwrap();
-    let helper_path = PathBuf::from("/virtual/helpers.rk");
+    let helper_path = virtual_path("helpers.rk");
     let helper = Url::from_file_path(&helper_path).unwrap();
     let mut state = super::State::default();
     state.documents.insert(
@@ -54,12 +54,12 @@ fn regression_clears_cross_file_diagnostics_only_for_the_publishing_target() {
 
 #[test]
 fn regression_retires_diagnostics_when_the_last_document_leaves_a_target() {
-    let a = PathBuf::from("/virtual/a.rk");
-    let b = PathBuf::from("/virtual/b.rk");
+    let a = virtual_path("a.rk");
+    let b = virtual_path("b.rk");
     let a_uri = Url::from_file_path(&a).unwrap();
     let b_uri = Url::from_file_path(&b).unwrap();
-    let another_a = Url::from_file_path("/virtual/a_module.rk").unwrap();
-    let shared_path = PathBuf::from("/virtual/shared.rk");
+    let another_a = Url::from_file_path(virtual_path("a_module.rk")).unwrap();
+    let shared_path = virtual_path("shared.rk");
     let shared = Url::from_file_path(&shared_path).unwrap();
     let mut state = super::State::default();
     for uri in [&a_uri, &b_uri, &another_a, &shared] {
@@ -156,7 +156,7 @@ fn mixed_package_binary_entries_analyze_with_their_own_library() {
 fn runtime_analyzes_nested_source_on_blocking_worker() {
     super::runtime().unwrap().block_on(async {
         tokio::task::spawn_blocking(|| {
-            let path = PathBuf::from("/virtual/nested.rk");
+            let path = virtual_path("nested.rk");
             let source = format!(
                 "main = ->\n    value = {}0{}\n    0\n",
                 "[".repeat(32),
@@ -189,7 +189,7 @@ fn positions_use_utf16_code_units() {
 
 #[test]
 fn inlay_type_hints_only_label_unannotated_bindings_in_range() {
-    let path = PathBuf::from("/virtual/main.rk");
+    let path = virtual_path("main.rk");
     let text = "main = ->\n    first = 1\n    typed: I64 = first\n    last = typed\n    last\n";
     let config = analysis_config(
         path.clone(),
@@ -339,7 +339,7 @@ fn open_buffers_for_the_same_target_share_analysis() {
 
 #[test]
 fn diagnostics_convert_byte_ranges_to_utf16_ranges() {
-    let path = PathBuf::from("/virtual/main.rk");
+    let path = virtual_path("main.rk");
     let uri = Url::from_file_path(&path).unwrap();
     let diagnostic =
         RockDiagnostic::new("bad expression".to_string(), Span::new(path.into(), 1, 5));
@@ -396,7 +396,7 @@ fn project_configuration_discovers_artifacts_and_applies_explicit_overrides() {
 
 #[test]
 fn analysis_follows_the_configured_target() {
-    let path = PathBuf::from("/virtual/main.rk");
+    let path = virtual_path("main.rk");
     // `main` calls an item only the Windows branch defines, so analysis
     // succeeds only when the configured target selects that branch.
     let text = "cfg(target_os = \"windows\")\n    answer = -> 0\n\nmain = -> answer!\n";
@@ -422,12 +422,14 @@ fn analysis_follows_the_configured_target() {
     assert!(analyze_for(Some("x86_64-unknown-linux-gnu")).is_err());
 }
 
-// Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
 fn canonical_temp_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir();
-    if cfg!(unix) {
-        dir.canonicalize().unwrap()
-    } else {
-        dir
-    }
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
+}
+
+// An absolute path that exists only in the editor's buffers.
+fn virtual_path(name: &str) -> PathBuf {
+    let root = if cfg!(windows) { "C:\\virtual" } else { "/virtual" };
+    PathBuf::from(root).join(name)
 }

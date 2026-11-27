@@ -6,6 +6,7 @@ repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
+dunce = "1.0"
 clap = { workspace = true }
 rock-lib = { path = "../lib" }
 rock = { path = "../rock" }

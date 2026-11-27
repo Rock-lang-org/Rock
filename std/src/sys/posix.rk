@@ -51,6 +51,9 @@ gcvt: F64 -> I32 -> *U8 -> *U8
 
 // ---- File descriptors -----------------------------------------------------
 
+stdout_prepare: () -> ()
+< stdout_prepare = -> ()
+
 fd_read: I32 -> *U8 -> I64 -> I64
 < fd_read = fd, buf, len -> read fd, buf, len
 

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_run_config_validate_artifact_rejects_corrupt_artifact() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_validate_artifact_{}_{}",
         std::process::id(),
         "corrupt"
@@ -34,7 +34,7 @@ fn test_run_config_validate_artifact_rejects_corrupt_artifact() {
 
 #[test]
 fn test_run_config_validate_artifact_reports_missing_object_as_file() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_validate_artifact_{}_{}",
         std::process::id(),
         "missing_object"
@@ -81,7 +81,7 @@ fn test_run_config_validate_artifact_reports_missing_object_as_file() {
 
 #[test]
 fn test_run_config_validate_artifact_accepts_sibling_root_relative_object() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_validate_artifact_{}_{}",
         std::process::id(),
         "sibling_root_object"
@@ -129,7 +129,7 @@ fn test_resolve_artifact_object_path_prefers_artifact_relative_over_cwd() {
         std::process::id(),
         "artifact_relative"
     );
-    let base = std::env::temp_dir().join(&test_name);
+    let base = canonical_temp_dir().join(&test_name);
     let _ = std::fs::remove_dir_all(&base);
     let artifact_dir = base.join("artifacts");
     std::fs::create_dir_all(&artifact_dir).unwrap();
@@ -159,4 +159,10 @@ fn test_resolve_artifact_object_path_prefers_artifact_relative_over_cwd() {
             .join("target")
             .join(test_name),
     );
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

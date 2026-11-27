@@ -6,7 +6,7 @@ use crate::{compile_with_products, Config, SourceProvider};
 
 #[test]
 fn artifact_source_provider_text_contributes_to_product_source_hash() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_compile_products_{}_{}",
         std::process::id(),
         "artifact_provider_hash"
@@ -59,9 +59,9 @@ fn compile_artifact_provider_fingerprint(base: &Path, answer: &str) -> ProductSo
 
 #[test]
 fn product_source_fingerprint_is_stable_across_checkout_paths() {
-    let first = std::env::temp_dir().join(format!("rock_fingerprint_first_{}", std::process::id()));
+    let first = canonical_temp_dir().join(format!("rock_fingerprint_first_{}", std::process::id()));
     let second =
-        std::env::temp_dir().join(format!("rock_fingerprint_second_{}", std::process::id()));
+        canonical_temp_dir().join(format!("rock_fingerprint_second_{}", std::process::id()));
     let _ = fs::remove_dir_all(&first);
     let _ = fs::remove_dir_all(&second);
     fs::create_dir_all(&first).unwrap();
@@ -113,7 +113,7 @@ fn product_source_fingerprint_is_stable_across_checkout_paths() {
 #[test]
 fn product_source_fingerprint_ignores_unloaded_rock_files() {
     let base =
-        std::env::temp_dir().join(format!("rock_fingerprint_unloaded_{}", std::process::id()));
+        canonical_temp_dir().join(format!("rock_fingerprint_unloaded_{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(&base).unwrap();
     let entry_file = base.join("main.rk");
@@ -158,7 +158,7 @@ fn product_source_fingerprint_ignores_unloaded_rock_files() {
 
 #[test]
 fn product_source_fingerprint_uses_source_loader_loaded_files() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_fingerprint_loaded_modules_{}",
         std::process::id()
     ));
@@ -191,7 +191,7 @@ fn product_source_fingerprint_uses_source_loader_loaded_files() {
 
 #[test]
 fn product_source_fingerprint_includes_macro_generated_source_modules() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_fingerprint_macro_modules_{}",
         std::process::id()
     ));
@@ -224,4 +224,10 @@ fn product_source_fingerprint_includes_macro_generated_source_modules() {
     );
 
     let _ = fs::remove_dir_all(&base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

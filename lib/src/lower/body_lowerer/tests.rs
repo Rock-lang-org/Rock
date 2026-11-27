@@ -7,7 +7,7 @@ use crate::source_loader::SourceDatabase;
 
 #[test]
 fn body_lowerer_attaches_bodies_by_source_id_despite_resolver_name_changes() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_body_lowerer_modules_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -293,7 +293,7 @@ fn function_reference_collector_ignores_local_shadowing() {
 
 #[test]
 fn body_lowerer_lowers_source_backed_body_diagnostic_once() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_body_lowerer_duplicate_diagnostic_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -354,4 +354,10 @@ fn body_lowerer_lowers_source_backed_body_diagnostic_once() {
     );
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

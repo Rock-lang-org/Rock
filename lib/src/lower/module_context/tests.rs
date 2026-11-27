@@ -103,7 +103,7 @@ fn source_module_resolver_loads_cached_local_and_external_modules_from_context()
 
 #[test]
 fn lowerer_exposes_module_backing_state_through_module_service() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_module_context_service_state_{}",
         std::process::id()
     ));
@@ -150,7 +150,7 @@ fn lowerer_exposes_module_backing_state_through_module_service() {
 
 #[test]
 fn module_context_prefers_current_crate_prefixed_graph_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_module_context_prefers_graph_{}",
         std::process::id()
     ));
@@ -180,7 +180,7 @@ fn module_context_prefers_current_crate_prefixed_graph_path() {
 
 #[test]
 fn module_context_does_not_use_cache_without_loaded_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_module_context_requires_graph_{}",
         std::process::id()
     ));
@@ -208,7 +208,7 @@ fn module_context_does_not_use_cache_without_loaded_path() {
 
 #[test]
 fn module_context_skips_only_root_file_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_module_context_skips_root_{}",
         std::process::id()
     ));
@@ -230,7 +230,7 @@ fn module_context_skips_only_root_file_path() {
 
 #[test]
 fn module_context_iterates_loaded_modules_from_cache_and_skips_root() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_module_context_iter_loaded_{}",
         std::process::id()
     ));
@@ -292,7 +292,7 @@ fn module_context_iterates_loaded_modules_from_cache_and_skips_root() {
 
 #[test]
 fn module_context_owns_loaded_root_name_lookup() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_module_context_loaded_root_{}",
         std::process::id()
     ));
@@ -462,4 +462,10 @@ impl ModuleLoweringContext {
         self.current_module_path = previous_path;
         result
     }
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

@@ -10,7 +10,7 @@ use crate::{compile_with_products, Config, SourceProvider};
 
 #[test]
 fn compile_with_products_extracts_ids_from_normal_pipeline() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_compile_products_{}_{}",
         std::process::id(),
         "normal_pipeline"
@@ -50,7 +50,7 @@ fn compile_with_products_extracts_ids_from_normal_pipeline() {
 
 #[test]
 fn compile_with_products_records_explicit_object_output_path() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_compile_products_{}_{}",
         std::process::id(),
         "object_output"
@@ -82,7 +82,7 @@ fn compile_with_products_records_explicit_object_output_path() {
 
 #[test]
 fn compile_with_products_records_object_backend_symbols() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_compile_products_{}_{}",
         std::process::id(),
         "object_backend_symbols"
@@ -190,7 +190,7 @@ fn compile_with_products_records_canonical_extern_artifact_paths() {
 
 #[test]
 fn compile_with_artifact_source_providers_loads_module_declarations_through_source_database() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_compile_products_{}_{}",
         std::process::id(),
         "artifact_source_providers"
@@ -236,7 +236,7 @@ fn compile_with_artifact_source_providers_loads_module_declarations_through_sour
 
 #[test]
 fn compile_with_virtual_source_providers_loads_siblings_without_filesystem_probe() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_compile_products_{}_{}",
         std::process::id(),
         "virtual_source_providers"
@@ -282,7 +282,7 @@ fn compile_with_virtual_source_providers_loads_siblings_without_filesystem_probe
 
 #[test]
 fn artifact_source_provider_parse_diagnostic_preserves_source_metadata() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_compile_products_{}_{}",
         std::process::id(),
         "artifact_provider_diagnostic"
@@ -416,7 +416,7 @@ fn compile_virtual_sources(name: &str, sources: &[(&str, &str)]) -> Result<(), S
     let base = PathBuf::from(format!("/virtual/macro_child_modules/{name}"));
     compile_with_products(&Config {
         entry_file: base.join(sources[0].0),
-        output_dir: std::env::temp_dir().join(format!(
+        output_dir: canonical_temp_dir().join(format!(
             "rock_macro_child_modules_{}_{name}",
             std::process::id()
         )),
@@ -457,7 +457,7 @@ fn std_like_products(prelude: &str) -> CompilerProducts {
     ];
     compile_with_products(&Config {
         entry_file: base.join("lib.rk"),
-        output_dir: std::env::temp_dir().join(format!("rock_macro_prelude_{}", std::process::id())),
+        output_dir: canonical_temp_dir().join(format!("rock_macro_prelude_{}", std::process::id())),
         no_std: true,
         no_prelude: true,
         no_link: true,
@@ -576,7 +576,7 @@ fn macro_errors_in_child_file_modules_are_reported() {
 
 #[test]
 fn check_writes_no_output_but_reports_ownership_errors() {
-    let base = std::env::temp_dir().join(format!("rock_check_{}", std::process::id()));
+    let base = canonical_temp_dir().join(format!("rock_check_{}", std::process::id()));
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(&base).unwrap();
     let entry_file = base.join("main.rk");
@@ -611,4 +611,10 @@ fn check_writes_no_output_but_reports_ownership_errors() {
         diagnostics.0
     );
     let _ = fs::remove_dir_all(&base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

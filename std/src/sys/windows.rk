@@ -9,6 +9,7 @@
 > std::ffi::libc::malloc
 > std::ffi::libc::free
 > std::ffi::libc::exit
+> std::ffi::libc::strlen
 
 // C runtime
 extern _errno: () -> *I32
@@ -158,7 +159,15 @@ arg_release: *U8 -> ()
 // ---- Number formatting ----------------------------------------------------
 
 gcvt: F64 -> I32 -> *U8 -> *U8
-< gcvt = value, digits, buf -> _gcvt value, digits, buf
+< gcvt = value, digits, out ->
+    mut buf = out
+    _gcvt value, digits, buf
+    // MSVC keeps the point of an integral value ("12."); glibc drops it.
+    len = strlen buf
+    if len > 0 && (unsafe buf[len - 1]) == (46 as U8)
+        unsafe
+            buf[len - 1] = 0 as U8
+    buf
 
 // ---- File descriptors -----------------------------------------------------
 
@@ -179,6 +188,13 @@ binary_stdio: I32 -> ()
 binary_stdio = fd ->
     if fd >= (0 as I32) && fd <= (2 as I32)
         _setmode fd, o_binary!
+    return
+
+// Called before C runtime stdio writes to stdout, so `\n` is not expanded
+// to `\r\n`.
+stdout_prepare: () -> ()
+< stdout_prepare = ->
+    binary_stdio (1 as I32)
     return
 
 fd_read: I32 -> *U8 -> I64 -> I64

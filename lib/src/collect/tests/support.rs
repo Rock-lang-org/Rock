@@ -662,7 +662,7 @@ impl Drop for CurrentCrateCanonicalFixture {
 }
 
 pub(super) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_canonical_paths_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -735,4 +735,10 @@ pub(super) fn current_crate_canonical_fixture() -> CurrentCrateCanonicalFixture 
         graph,
         temp_dir,
     }
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

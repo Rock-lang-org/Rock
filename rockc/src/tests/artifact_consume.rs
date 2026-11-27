@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn test_run_config_consumes_product_artifact_dependency() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_product_dependency_{}_{}",
         std::process::id(),
         "smoke"
@@ -58,7 +58,7 @@ fn test_run_config_consumes_product_artifact_dependency() {
     .unwrap();
     run_config(app_config).unwrap();
 
-    let executable = app_build.join("main");
+    let executable = app_build.join(format!("main{}", std::env::consts::EXE_SUFFIX));
     assert!(executable.exists());
     let status = std::process::Command::new(&executable).status().unwrap();
     assert_eq!(status.code(), Some(5));
@@ -68,7 +68,7 @@ fn test_run_config_consumes_product_artifact_dependency() {
 
 #[test]
 fn test_run_config_rejects_extern_artifact_name_mismatch() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_product_dependency_{}_{}",
         std::process::id(),
         "name_mismatch"
@@ -130,7 +130,7 @@ fn test_run_config_rejects_extern_artifact_name_mismatch() {
 
 #[test]
 fn test_run_config_consumes_product_artifact_generic_dependency() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_product_dependency_{}_{}",
         std::process::id(),
         "generic"
@@ -186,10 +186,16 @@ fn test_run_config_consumes_product_artifact_generic_dependency() {
     .unwrap();
     run_config(app_config).unwrap();
 
-    let executable = app_build.join("main");
+    let executable = app_build.join(format!("main{}", std::env::consts::EXE_SUFFIX));
     assert!(executable.exists());
     let status = std::process::Command::new(&executable).status().unwrap();
     assert_eq!(status.code(), Some(5));
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

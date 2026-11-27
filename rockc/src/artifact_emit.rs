@@ -36,8 +36,8 @@ fn relative_to_root(path: &std::path::Path, root: &std::path::Path) -> Option<Pa
         }
     }
 
-    let path = path.canonicalize().ok()?;
-    let root = root.canonicalize().ok()?;
+    let path = dunce::canonicalize(&path).ok()?;
+    let root = dunce::canonicalize(&root).ok()?;
     path.strip_prefix(root)
         .ok()
         .filter(|relative| !relative.as_os_str().is_empty())
@@ -49,7 +49,7 @@ fn same_directory(left: &std::path::Path, right: &std::path::Path) -> bool {
         return true;
     }
 
-    match (left.canonicalize(), right.canonicalize()) {
+    match (dunce::canonicalize(&left), dunce::canonicalize(&right)) {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
     }

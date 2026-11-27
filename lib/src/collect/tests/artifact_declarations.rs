@@ -338,7 +338,7 @@ fn collect_artifact_declarations_expands_inline_module_glob_exports_with_qualifi
 
 #[test]
 fn collect_artifact_declarations_uses_source_crate_loaded_module_paths() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_artifact_source_paths_{}",
         std::process::id()
     ));
@@ -377,7 +377,7 @@ fn collect_artifact_declarations_uses_source_crate_loaded_module_paths() {
 
 #[test]
 fn collect_artifact_declarations_preserves_child_exports_when_parent_reference_key_collides() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_artifact_export_collision_{}",
         std::process::id()
     ));
@@ -561,4 +561,10 @@ fn collect_artifact_declarations_capture_dependency_bootstrap_for_cross_crate_hi
     assert_eq!(impl_.methods["show"].id, impl_method_id);
     assert!(decls.current_def_ids.contains(&trait_method_id));
     assert!(decls.current_def_ids.contains(&impl_method_id));
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

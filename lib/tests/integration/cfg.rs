@@ -197,7 +197,11 @@ fn test_std_compiles_for_every_supported_target() {
         config.target = Some(target.to_string());
         config.emit_object = Some(object.clone());
         if let Err(diagnostics) = rock_lib::compile(&config) {
-            panic!("std failed for {target}:\n{}", messages(&diagnostics));
+            let messages = messages(&diagnostics);
+            if missing_llvm_backend(&messages) {
+                continue;
+            }
+            panic!("std failed for {target}:\n{messages}");
         }
         let bytes = fs::read(&object).unwrap();
         assert_eq!(&bytes[..magic.len()], magic, "object format for {target}");
@@ -215,7 +219,13 @@ fn test_cfg_emits_objects_for_the_selected_target() {
 
     let mut config = no_std_config(entry, &dir, "aarch64-apple-darwin");
     config.emit_llvm = true;
-    rock_lib::compile(&config).expect("darwin object emission should succeed");
+    if let Err(diagnostics) = rock_lib::compile(&config) {
+        let messages = messages(&diagnostics);
+        if missing_llvm_backend(&messages) {
+            return;
+        }
+        panic!("darwin object emission should succeed:\n{messages}");
+    }
     let ir = fs::read_to_string(dir.join("build/main.ll")).unwrap();
     assert!(
         ir.contains("target triple = \"aarch64-apple-darwin\""),
@@ -224,4 +234,15 @@ fn test_cfg_emits_objects_for_the_selected_target() {
     // Mach-O 64-bit magic, little endian.
     let object = fs::read(dir.join("build/main.o")).unwrap();
     assert_eq!(&object[..4], &[0xcf, 0xfa, 0xed, 0xfe]);
+}
+
+
+// Some LLVM builds (such as the Windows CI package) include only the host
+// backend. Cross-target checks are skipped there, not failed.
+fn missing_llvm_backend(messages: &str) -> bool {
+    if messages.contains("LLVM has no backend for target") {
+        eprintln!("skipping: {messages}");
+        return true;
+    }
+    false
 }

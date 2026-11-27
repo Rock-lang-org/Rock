@@ -95,7 +95,7 @@ fn test_cli_progress_reports_rebuilds_in_dependency_order_on_stderr() {
             String::from_utf8(output.stdout).unwrap(),
             format!(
                 "{}\n",
-                app.join("build").join(directory).join("app").display()
+                app.join("build").join(directory).join(format!("app{}", std::env::consts::EXE_SUFFIX)).display()
             )
         );
 
@@ -206,7 +206,7 @@ fn test_cli_progress_for_library_cache_and_run_keeps_stdout_clean() {
             String::from_utf8(output.stdout).unwrap(),
             format!(
                 "{}\n",
-                root.join("build/debug/artifacts/app-0.1.0.rkca").display()
+                root.join("build").join("debug").join("artifacts").join("app-0.1.0.rkca").display()
             )
         );
     }
@@ -311,7 +311,7 @@ fn test_cli_live_progress_in_a_terminal_preserves_output_and_clears_on_failure()
         if exit == 0 {
             assert!(terminal.contains("✓ ready"), "{terminal}");
             assert!(terminal.contains("1/1 crates · 100%"), "{terminal}");
-            assert!(stdout.ends_with(&format!("{}\n", root.join("build/debug/app").display())));
+            assert!(stdout.ends_with(&format!("{}\n", root.join("build").join("debug").join(format!("app{}", std::env::consts::EXE_SUFFIX)).display())));
         } else {
             assert!(!terminal.contains("✓ ready"), "{terminal}");
             assert!(

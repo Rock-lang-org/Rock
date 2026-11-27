@@ -20,7 +20,7 @@ fn def_id(index: u32) -> DefId {
 
 #[test]
 fn load_external_crate_module_prefers_seeded_module_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_external_dir_module_{}",
         std::process::id()
     ));
@@ -60,7 +60,7 @@ fn load_external_crate_module_prefers_seeded_module_path() {
 
 #[test]
 fn load_module_requires_seeded_module_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_requires_seeded_module_{}",
         std::process::id()
     ));
@@ -93,7 +93,7 @@ fn load_module_requires_seeded_module_path() {
 
 #[test]
 fn load_module_with_prefix_does_not_fallback_to_unqualified_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_no_unqualified_fallback_{}",
         std::process::id()
     ));
@@ -127,7 +127,7 @@ fn load_module_with_prefix_does_not_fallback_to_unqualified_module() {
 
 #[test]
 fn load_module_with_prefix_prefers_current_crate_prefixed_graph_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_prefers_current_crate_graph_path_{}",
         std::process::id()
     ));
@@ -176,7 +176,7 @@ fn load_module_with_prefix_prefers_current_crate_prefixed_graph_path() {
 
 #[test]
 fn load_external_crate_module_requires_seeded_child_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_collect_requires_seeded_external_{}",
         std::process::id()
     ));
@@ -340,4 +340,10 @@ fn collect_context_lowers_associated_type_through_canonical_trait_import_id() {
 
     assert!(matches!(ty, Type::Projection { trait_id: id, .. } if id == trait_id));
     assert!(context.errors.is_empty());
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

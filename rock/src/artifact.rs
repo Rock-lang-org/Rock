@@ -141,8 +141,7 @@ fn collect_dependency_artifacts_into(
     for (dep_name, dependency) in dependencies {
         let dep_root =
             resolve_dependency_root(&package.root_dir, &state.project_root, dep_name, dependency)?;
-        let dep_root = dep_root
-            .canonicalize()
+        let dep_root = dunce::canonicalize(&dep_root)
             .map_err(|e| format!("Failed to resolve crate root {}: {}", dep_root.display(), e))?;
         if !visited.insert(dep_root.clone()) {
             continue;
@@ -161,7 +160,7 @@ pub(crate) fn ensure_artifact(
     crate_root: &Path,
     state: &mut ArtifactBuildState,
 ) -> Result<PathBuf, String> {
-    let canonical_root = crate_root.canonicalize().map_err(|e| {
+    let canonical_root = dunce::canonicalize(&crate_root).map_err(|e| {
         format!(
             "Failed to resolve crate root {}: {}",
             crate_root.display(),
@@ -397,8 +396,18 @@ fn rockc_executable_file(rockc: &Path) -> Option<PathBuf> {
     if rockc.components().count() > 1 {
         return rockc.is_file().then(|| rockc.to_path_buf());
     }
+    // Like Command on Windows, an extensionless name also matches `name.exe`.
+    let suffixed = (rockc.extension().is_none() && !std::env::consts::EXE_SUFFIX.is_empty())
+        .then(|| {
+            let mut name = rockc.as_os_str().to_owned();
+            name.push(std::env::consts::EXE_SUFFIX);
+            PathBuf::from(name)
+        });
     std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|dir| dir.join(rockc))
+        .flat_map(|dir| {
+            let suffixed = suffixed.as_ref().map(|name| dir.join(name));
+            std::iter::once(dir.join(rockc)).chain(suffixed)
+        })
         .find(|candidate| candidate.is_file())
 }
 

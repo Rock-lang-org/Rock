@@ -13,7 +13,7 @@ fn diagnostic_report_handles_more_than_three_labels() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let source_path = std::env::temp_dir().join(format!(
+    let source_path = canonical_temp_dir().join(format!(
         "rock-diagnostic-many-labels-{}-{nonce}.rk",
         std::process::id()
     ));
@@ -391,4 +391,10 @@ fn report_rejects_invalid_attached_ranges_without_panicking() {
 
     let result = std::panic::catch_unwind(|| diagnostic.report());
     assert!(result.is_ok());
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

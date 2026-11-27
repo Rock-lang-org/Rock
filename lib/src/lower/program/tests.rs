@@ -16,7 +16,7 @@ fn loaded_module(qualified_name: &str, path: std::path::PathBuf, module: Module)
 
 #[test]
 fn source_module_resolver_requires_seeded_module_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_requires_seeded_module_{}",
         std::process::id()
     ));
@@ -38,7 +38,7 @@ fn source_module_resolver_requires_seeded_module_path() {
 
 #[test]
 fn source_module_resolver_prefers_current_crate_prefixed_graph_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_prefers_current_crate_graph_path_{}",
         std::process::id()
     ));
@@ -88,7 +88,7 @@ fn source_module_resolver_prefers_current_crate_prefixed_graph_path() {
 
 #[test]
 fn source_module_resolver_requires_seeded_external_child_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_requires_seeded_external_{}",
         std::process::id()
     ));
@@ -146,4 +146,10 @@ fn public_lower_entrypoint_uses_indexed_current_def_ids() {
 
     assert!(partial.current_def_ids.contains(&trait_sig_id));
     assert!(partial.current_def_ids.contains(&impl_method_id));
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

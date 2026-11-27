@@ -59,8 +59,7 @@ pub(crate) fn ensure_shims(home: &RockupHome) -> Result<(), String> {
             ));
         }
     }
-    let rockup_path = rockup_path
-        .canonicalize()
+    let rockup_path = dunce::canonicalize(&rockup_path)
         .map_err(|e| format!("Failed to canonicalize installed rockup: {}", e))?;
     write_shim(home, ROCK_BIN_NAME, &rockup_path)?;
     write_shim(home, ROCKC_BIN_NAME, &rockup_path)?;
@@ -276,10 +275,7 @@ fn shell_double_quote_escape(value: &str) -> String {
 }
 
 pub(crate) fn print_current_shell_activation_hint() -> Result<(), String> {
-    let executable = RockupHome::resolve()?
-        .bin_dir()
-        .join("rockup")
-        .canonicalize()
+    let executable = dunce::canonicalize(RockupHome::resolve()?.bin_dir().join("rockup"))
         .map_err(|e| format!("Failed to canonicalize rockup executable path: {}", e))?;
     eprintln!(
         "For this shell, run: eval \"$({} env)\"",

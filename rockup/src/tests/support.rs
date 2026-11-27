@@ -19,11 +19,10 @@ static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn temp_test_dir(name: &str) -> PathBuf {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!("rockup_{}_{}", name, id));
+    let dir = canonical_temp_dir().join(format!("rockup_{}_{}", name, id));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    // Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
-    if cfg!(unix) { dir.canonicalize().unwrap() } else { dir }
+    dir
 }
 
 pub(super) fn fake_home(root: PathBuf) -> RockupHome {
@@ -123,4 +122,10 @@ pub(super) fn workspace_std_root() -> PathBuf {
         .parent()
         .unwrap()
         .join("std")
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

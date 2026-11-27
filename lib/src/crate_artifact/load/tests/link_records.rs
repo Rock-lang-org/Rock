@@ -374,7 +374,7 @@ fn load_product_artifact_rejects_body_only_function_link_record_without_interfac
 
 #[test]
 fn load_product_artifact_registers_object_backed_crate() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "object_crate"
@@ -445,7 +445,7 @@ fn load_product_artifact_registers_object_backed_crate() {
 
 #[test]
 fn load_product_artifact_resolves_common_relative_object_path() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "relative_object"
@@ -495,7 +495,7 @@ fn load_product_artifact_prefers_artifact_relative_object_over_cwd() {
         std::process::id(),
         "artifact_relative"
     );
-    let base = std::env::temp_dir().join(&test_name);
+    let base = canonical_temp_dir().join(&test_name);
     let _ = fs::remove_dir_all(&base);
     let artifact_dir = base.join("artifacts");
     fs::create_dir_all(&artifact_dir).unwrap();
@@ -548,4 +548,10 @@ fn load_product_artifact_prefers_artifact_relative_object_over_cwd() {
             .join("target")
             .join(test_name),
     );
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

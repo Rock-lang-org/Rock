@@ -581,7 +581,7 @@ fn product_artifact_remaps_signature_generic_bounds() {
 
 #[test]
 fn load_product_artifact_keeps_generic_body_without_display_metadata() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         "generic_names"
@@ -641,4 +641,10 @@ fn load_product_artifact_keeps_generic_body_without_display_metadata() {
     assert!(dep.body_providers().generic_function(loaded_id).is_some());
 
     let _ = fs::remove_dir_all(&base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

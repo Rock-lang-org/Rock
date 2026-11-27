@@ -24,10 +24,10 @@ fn resolves_library_entry_for_project_analysis() {
 
 #[test]
 fn finds_nearest_manifest_and_resolves_no_std_project() {
-    let root = std::env::temp_dir().join(format!(
+    let root = canonical_temp_dir().join(format!(
         "rock_project_analysis_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("test")
+        std::thread::current().name().unwrap_or("test").replace("::", "-")
     ));
     let source_dir = root.join("src/nested");
     fs::create_dir_all(&source_dir).unwrap();
@@ -92,4 +92,10 @@ fn project_analysis_uses_the_project_dependency_cache() {
     assert!(project.extern_artifacts[0].1.exists());
     assert!(!dep.join("build").exists());
     fs::remove_dir_all(root).unwrap();
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

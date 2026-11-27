@@ -255,7 +255,7 @@ impl Drop for TempDirCleanup {
 }
 
 fn temp_test_dir(label: &str) -> (PathBuf, TempDirCleanup) {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_product_loader_{}_{}",
         std::process::id(),
         label
@@ -322,4 +322,10 @@ pub(crate) fn remap_expr_child_locations<P: crate::hir::HirPhase>(
         &mut local_scope,
         depth,
     )
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

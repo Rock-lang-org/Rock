@@ -25,7 +25,7 @@ pub(crate) const TEST_PROCESS_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(crate) fn test_temp_dir(id: u64) -> PathBuf {
     let tid = std::thread::current().id();
-    std::env::temp_dir().join(format!("rock_test_{}_{:?}_{}", std::process::id(), tid, id))
+    canonical_temp_dir().join(format!("rock_test_{}_{:?}_{}", std::process::id(), tid, id))
 }
 
 pub(crate) fn workspace_root() -> PathBuf {
@@ -319,7 +319,7 @@ pub(crate) fn std_artifact_path() -> PathBuf {
         .get_or_init(|| {
             let std_dir = std_path();
             let cache_key = std_cache_key(&std_dir, &std_cache_compiler_stamp());
-            let artifact_dir = std::env::temp_dir().join(format!(
+            let artifact_dir = canonical_temp_dir().join(format!(
                 "rock_integration_std_product_artifact_{}",
                 cache_key
             ));
@@ -849,4 +849,10 @@ pub(crate) fn compile_should_fail_with_source_diagnostic(source: &str, expected_
     );
 
     let _ = fs::remove_dir_all(dir);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

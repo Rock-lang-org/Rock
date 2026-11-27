@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn pinned_dependency_fetches_exact_commit_and_reuses_checkout() {
-    let root = std::env::temp_dir().join(format!("rock-git-fetch-test-{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rock-git-fetch-test-{}", std::process::id()));
     let source = root.join("source");
     std::fs::create_dir_all(&source).unwrap();
     let git = |args: &[&str]| {
@@ -76,7 +76,7 @@ fn pinned_dependency_fetches_exact_commit_and_reuses_checkout() {
 
 #[test]
 fn interrupted_checkout_is_replaced_on_next_fetch() {
-    let root = std::env::temp_dir().join(format!("rock-git-partial-test-{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rock-git-partial-test-{}", std::process::id()));
     let source = root.join("source");
     std::fs::create_dir_all(&source).unwrap();
     let git = |args: &[&str]| {
@@ -121,7 +121,7 @@ fn interrupted_checkout_is_replaced_on_next_fetch() {
 
 #[test]
 fn git_checkout_path_dependencies_cannot_escape_the_checkout() {
-    let root = std::env::temp_dir().join(format!("rock-git-escape-test-{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rock-git-escape-test-{}", std::process::id()));
     let checkout = root.join("build/git/owner/repo/0123456789abcdef0123456789abcdef01234567");
     std::fs::create_dir_all(checkout.join("inner")).unwrap();
     std::fs::create_dir_all(root.join("outside")).unwrap();
@@ -144,7 +144,7 @@ fn git_checkout_path_dependencies_cannot_escape_the_checkout() {
 
 #[test]
 fn pinned_dependency_uses_project_cache_without_network() {
-    let root = std::env::temp_dir().join(format!("rock-git-cache-test-{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rock-git-cache-test-{}", std::process::id()));
     let scratch = root.join("scratch");
     std::fs::create_dir_all(&scratch).unwrap();
     let git = |dir: &Path, args: &[&str]| {
@@ -226,7 +226,7 @@ fn commit_fixture(source: &Path, links: &[(&str, &str)]) -> String {
 #[cfg(unix)]
 #[test]
 fn checkouts_reject_symbolic_links_leaving_the_checkout() {
-    let root = std::env::temp_dir().join(format!("rock-git-symlink-test-{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rock-git-symlink-test-{}", std::process::id()));
     let cases: [(&str, &[(&str, &str)], bool); 3] = [
         ("internal", &[("alias.toml", "rock.toml")], true),
         ("escaping", &[("secret", "../../../../etc/hostname")], false),
@@ -267,4 +267,10 @@ fn git_cache_dir_normalizes_repository_spelling() {
             "{url}"
         );
     }
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

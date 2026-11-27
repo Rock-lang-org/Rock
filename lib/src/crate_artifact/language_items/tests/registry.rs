@@ -311,10 +311,10 @@ fn product_language_items_remap_every_def_id_at_nonzero_runtime_crate_id() {
     first.crate_identity = ProductCrateIdentity::local("first".to_string());
     let mut second = valid_products();
     second.crate_identity = ProductCrateIdentity::local("second".to_string());
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_language_item_remap_{}_{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("test")
+        std::thread::current().name().unwrap_or("test").replace("::", "-")
     ));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).expect("temporary artifact directory");
@@ -363,4 +363,10 @@ fn product_language_items_remap_every_def_id_at_nonzero_runtime_crate_id() {
     assert_eq!(try_protocol.break_variant_id, VariantId(0));
     assert_eq!(try_protocol.continue_variant_id, VariantId(1));
     let _ = std::fs::remove_dir_all(base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

@@ -49,7 +49,7 @@ pub(crate) struct Package {
 
 impl Package {
     pub(crate) fn load(root_dir: PathBuf) -> Result<Self, String> {
-        let canonical_root = root_dir.canonicalize().map_err(|e| {
+        let canonical_root = dunce::canonicalize(&root_dir).map_err(|e| {
             format!(
                 "Failed to resolve package root {}: {}",
                 root_dir.display(),

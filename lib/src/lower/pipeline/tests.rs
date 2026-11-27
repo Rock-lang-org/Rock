@@ -104,7 +104,7 @@ fn lowering_pipeline_preserves_deferred_impl_and_extern_ids() {
 
 #[test]
 fn lowering_pipeline_lowers_from_declarations() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_pipeline_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -484,7 +484,7 @@ fn lowering_pipeline_checks_conformance_after_selecting_operator_in_trait_defaul
 
 #[test]
 fn lowering_pipeline_lowers_root_trait_defaults_with_glob_imports() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_root_trait_glob_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -747,4 +747,10 @@ fn lowering_pipeline_does_not_make_dependency_exports_unqualified_without_import
         lowered.is_err(),
         "dependency root exports should require an explicit import for unqualified lookup"
     );
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

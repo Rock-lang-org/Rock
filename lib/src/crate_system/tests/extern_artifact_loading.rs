@@ -43,7 +43,7 @@ fn validate_extern_artifact_names_accepts_nonmatching_entry_stem_alias() {
 
 #[test]
 fn load_extern_artifacts_rejects_missing_declared_dependency() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rock_missing_extern_dependency_{}",
         std::process::id()
     ));
@@ -107,4 +107,10 @@ fn load_extern_artifacts_rejects_missing_declared_dependency() {
     );
 
     let _ = fs::remove_dir_all(&base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

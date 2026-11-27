@@ -20,7 +20,7 @@ pub(crate) fn resolve_dependency_root(
             candidate
         };
 
-        let resolved = resolved.canonicalize().map_err(|e| {
+        let resolved = dunce::canonicalize(&resolved).map_err(|e| {
             format!(
                 "Failed to resolve dependency '{}' at {}: {}",
                 dependency_name,
@@ -58,8 +58,8 @@ pub(crate) fn resolve_dependency_root(
 /// Returns the pinned checkout directory when `package_root` lies inside a
 /// fetched Git dependency of this project.
 fn git_checkout_root(project_root: &Path, package_root: &Path) -> Option<PathBuf> {
-    let git_root = project_root.join("build").join("git").canonicalize().ok()?;
-    let package_root = package_root.canonicalize().ok()?;
+    let git_root = dunce::canonicalize(project_root.join("build").join("git")).ok()?;
+    let package_root = dunce::canonicalize(&package_root).ok()?;
     let relative = package_root.strip_prefix(&git_root).ok()?;
     let mut checkout = git_root;
     let mut components = relative.components();
@@ -102,7 +102,7 @@ fn sibling_scratch_dir(dir: &Path, purpose: &str) -> Result<PathBuf, String> {
 fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, String> {
     // Also accept an existing checkout at the base cache path.
     if cache.join("rock.toml").is_file() && cached_checkout_matches(cache, rev)? {
-        return cache.canonicalize().map_err(|error| error.to_string());
+        return dunce::canonicalize(&cache).map_err(|error| error.to_string());
     }
     let parent = cache.parent().ok_or("Missing Git cache parent")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -125,7 +125,7 @@ fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, Strin
             && checkout.join("rock.toml").is_file()
             && cached_checkout_matches(&checkout, rev)?
         {
-            return checkout.canonicalize().map_err(|error| error.to_string());
+            return dunce::canonicalize(&checkout).map_err(|error| error.to_string());
         }
     }
     let stage = sibling_scratch_dir(cache, "fetch")?;
@@ -171,7 +171,7 @@ fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, Strin
         // keep their path, even if a later build needs a fresh copy.
         let checkout = sibling_scratch_dir(cache, &generation)?;
         std::fs::rename(&stage, &checkout).map_err(|error| error.to_string())?;
-        checkout.canonicalize().map_err(|error| error.to_string())
+        dunce::canonicalize(&checkout).map_err(|error| error.to_string())
     })();
     if stage.is_dir() {
         let _ = std::fs::remove_dir_all(&stage);
@@ -182,7 +182,7 @@ fn fetch_into_cache(cache: &Path, url: &str, rev: &str) -> Result<PathBuf, Strin
 /// Finds a symbolic link under `root` (outside `.git`) whose target is
 /// missing or lies outside `root`.
 fn escaping_symlink(root: &Path) -> Result<Option<PathBuf>, String> {
-    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    let root = dunce::canonicalize(&root).map_err(|error| error.to_string())?;
     let mut pending = vec![root.clone()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|error| error.to_string())? {
@@ -190,8 +190,7 @@ fn escaping_symlink(root: &Path) -> Result<Option<PathBuf>, String> {
             let path = entry.path();
             let kind = entry.file_type().map_err(|error| error.to_string())?;
             if kind.is_symlink() {
-                let inside = path
-                    .canonicalize()
+                let inside = dunce::canonicalize(&path)
                     .is_ok_and(|target| target.starts_with(&root));
                 if !inside {
                     return Ok(Some(path));

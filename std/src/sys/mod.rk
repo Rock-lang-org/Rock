@@ -9,6 +9,7 @@
 //   open_file: *U8 -> I32 -> I32       open a NUL-terminated UTF-8 path
 //   o_rdonly, o_wronly, o_creat, o_trunc, o_append: () -> I32
 //   fd_read, fd_write, fd_close        C runtime descriptor I/O
+//   stdout_prepare: () -> ()           make C stdio stdout write bytes unchanged
 //   sock_*                             IPv4 TCP sockets as I64 handles
 //   sockaddr_v4_set_family: *U8 -> ()  family header of struct sockaddr_in
 //   thread_*, sleep_ms                 OS threads and sleeping
@@ -21,6 +22,7 @@ cfg(target_family = "unix")
     < posix::gcvt
     < posix::fd_read
     < posix::fd_write
+    < posix::stdout_prepare
     < posix::fd_close
     < posix::sock_last_error
     < posix::sock_open
@@ -85,6 +87,7 @@ cfg(target_os = "windows")
     < windows::gcvt
     < windows::fd_read
     < windows::fd_write
+    < windows::stdout_prepare
     < windows::fd_close
     < windows::sock_last_error
     < windows::sock_open

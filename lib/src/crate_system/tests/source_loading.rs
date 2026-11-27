@@ -213,12 +213,8 @@ fn load_crate_from_dir_reports_missing_lib_through_source_database() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
 fn canonical_temp_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir();
-    if cfg!(unix) {
-        dir.canonicalize().unwrap()
-    } else {
-        dir
-    }
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

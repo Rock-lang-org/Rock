@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn test_run_config_formats_entry_file_in_place() {
     let base =
-        std::env::temp_dir().join(format!("rockc_format_{}_{}", std::process::id(), "entry"));
+        canonical_temp_dir().join(format!("rockc_format_{}_{}", std::process::id(), "entry"));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     let entry_file = base.join("main.rk");
@@ -29,7 +29,7 @@ fn test_run_config_formats_entry_file_in_place() {
 
 #[test]
 fn test_run_config_format_preserves_collapsed_body_trivia() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "collapsed_body_trivia"
@@ -58,7 +58,7 @@ fn test_run_config_format_preserves_collapsed_body_trivia() {
 
 #[test]
 fn test_run_config_format_preserves_standalone_multiline_block_comment() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "multiline_block_comment"
@@ -87,7 +87,7 @@ fn test_run_config_format_preserves_standalone_multiline_block_comment() {
 
 #[test]
 fn test_run_config_format_anchors_trivia_to_next_top_level() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "next_top_level_trivia"
@@ -116,7 +116,7 @@ fn test_run_config_format_anchors_trivia_to_next_top_level() {
 
 #[test]
 fn test_run_config_format_keeps_operator_functions_as_code() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "operator_function"
@@ -145,7 +145,7 @@ fn test_run_config_format_keeps_operator_functions_as_code() {
 
 #[test]
 fn test_run_config_format_preserves_struct_field_docs_before_field() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "struct_field_docs"
@@ -174,7 +174,7 @@ fn test_run_config_format_preserves_struct_field_docs_before_field() {
 
 #[test]
 fn test_run_config_format_preserves_statement_docs_between_statements() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "statement_docs"
@@ -206,7 +206,7 @@ fn test_run_config_format_preserves_statement_docs_between_statements() {
 
 #[test]
 fn test_run_config_format_preserves_same_line_block_comment_before_code() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "same_line_block_comment"
@@ -235,7 +235,7 @@ fn test_run_config_format_preserves_same_line_block_comment_before_code() {
 
 #[test]
 fn test_run_config_format_preserves_block_comment_line_comment_remainder() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "block_comment_line_comment_remainder"
@@ -264,7 +264,7 @@ fn test_run_config_format_preserves_block_comment_line_comment_remainder() {
 
 #[test]
 fn test_run_config_format_preserves_multiline_block_comment_line_comment_remainder() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "multiline_block_comment_line_comment_remainder"
@@ -293,7 +293,7 @@ fn test_run_config_format_preserves_multiline_block_comment_line_comment_remaind
 
 #[test]
 fn test_run_config_format_preserves_multiline_block_comment_before_code() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_{}_{}",
         std::process::id(),
         "partial_multiline_block_comment"
@@ -322,7 +322,7 @@ fn test_run_config_format_preserves_multiline_block_comment_before_code() {
 
 #[test]
 fn test_rock_lib_format_input_is_public_formatter_api() {
-    let base = std::env::temp_dir().join(format!(
+    let base = canonical_temp_dir().join(format!(
         "rockc_format_api_{}_{}",
         std::process::id(),
         "module"
@@ -347,4 +347,10 @@ fn test_rock_lib_format_input_is_public_formatter_api() {
     assert_ne!(formatted, "main  =  ->\n    0\n");
 
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

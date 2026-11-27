@@ -9,7 +9,7 @@ use crate::source_loader::{
 use crate::Config;
 
 fn temp_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = canonical_temp_dir().join(format!(
         "rock_source_loader_{}_{}",
         std::process::id(),
         name
@@ -566,4 +566,10 @@ fn re_recorded_module_indexes_new_canonical_path() {
         graph.module_for_path(&path).map(|m| m.id),
         Some(ModuleId(0))
     );
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

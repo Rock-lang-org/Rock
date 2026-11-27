@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn lower_from_declarations_uses_preloaded_module_cache() {
     let temp_dir =
-        std::env::temp_dir().join(format!("rock_lower_source_graph_{}", std::process::id()));
+        canonical_temp_dir().join(format!("rock_lower_source_graph_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
     let entry = temp_dir.join("main.rk");
@@ -46,7 +46,7 @@ fn lower_from_declarations_uses_preloaded_module_cache() {
 
 #[test]
 fn lower_from_declarations_uses_loaded_path_for_directory_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_source_graph_dir_{}",
         std::process::id()
     ));
@@ -104,7 +104,7 @@ fn lower_from_declarations_uses_loaded_path_for_directory_module() {
 
 #[test]
 fn lower_from_declarations_accepts_graph_only_current_crate_prefixed_nested_inline_module_path() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_current_crate_nested_inline_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -188,7 +188,7 @@ fn lower_from_declarations_accepts_graph_only_current_crate_prefixed_nested_inli
 #[test]
 fn lower_loaded_module_trait_defaults_does_not_skip_local_lib_module() {
     let temp_dir =
-        std::env::temp_dir().join(format!("rock_lower_local_lib_mod_{}", std::process::id()));
+        canonical_temp_dir().join(format!("rock_lower_local_lib_mod_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&temp_dir);
     std::fs::create_dir_all(&temp_dir).unwrap();
     let entry = temp_dir.join("main.rk");
@@ -242,7 +242,7 @@ fn lower_loaded_module_trait_defaults_does_not_skip_local_lib_module() {
 
 #[test]
 fn lower_loaded_modules_attach_same_named_trait_defaults_to_exact_ids() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_loaded_same_trait_names_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -310,7 +310,7 @@ fn lower_loaded_modules_attach_same_named_trait_defaults_to_exact_ids() {
 
 #[test]
 fn lower_from_declarations_reports_missing_source_module() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_lower_missing_source_backed_module_{}_{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -384,4 +384,10 @@ fn lower_from_declarations_reports_missing_source_module() {
     assert_eq!(span.end, helper_span.end);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

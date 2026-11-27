@@ -188,7 +188,7 @@ fn proc_macro_host_with_response(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock-integration-proc-macro-{}-{nonce}",
         std::process::id()
     ));
@@ -507,4 +507,10 @@ fn test_named_crate_does_not_resolve_own_macros_without_crate_prefix() {
     let error = rock_lib::compile(&config)
         .expect_err("own macros of a named crate are imported through the crate name");
     assert!(error.contains("Unknown macro '%join'"), "{error:?}");
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }

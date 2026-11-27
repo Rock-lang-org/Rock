@@ -21,7 +21,7 @@ fn proc_macro_artifact_with_response(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock-proc-macro-test-{}-{}",
         std::process::id(),
         nonce
@@ -97,4 +97,10 @@ fn assert_expands_to(input: &str, expected: &str) {
     let expected = parse_string(expected, &config).unwrap();
 
     assert_program_semantically_eq(&expanded, &expected);
+}
+
+// The tools report resolved paths: Darwin's temp dir is a symlink into
+// /private, and Windows' may use 8.3 short names.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    dunce::canonicalize(std::env::temp_dir()).unwrap()
 }
