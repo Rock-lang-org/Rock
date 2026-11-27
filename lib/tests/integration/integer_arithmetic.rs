@@ -493,8 +493,6 @@ fn test_integer_intrinsics_reject_bad_operands_and_invalid_constants() {
 
 #[test]
 fn test_integer_runtime_failures_never_reach_llvm_poison() {
-    use std::os::unix::process::ExitStatusExt;
-
     for opt_level in [0, 3] {
         for (operation, operand) in [
             ("~IntWrappingDiv (1 as I8), value", "0 as I8"),
@@ -539,7 +537,7 @@ fn test_integer_runtime_failures_never_reach_llvm_poison() {
             .unwrap();
             let output = Command::new(dir.join("trap")).output().unwrap();
             assert!(
-                output.status.signal().is_some(),
+                trapped(output.status),
                 "{operation} must trap even with checks disabled"
             );
         }
@@ -932,4 +930,17 @@ main = !-> return
 "#,
         "supertrait obligation",
     );
+}
+
+// A trap is a fatal signal on Unix and an NTSTATUS exception code on Windows.
+fn trapped(status: std::process::ExitStatus) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal().is_some()
+    }
+    #[cfg(windows)]
+    {
+        status.code().is_some_and(|code| code as u32 >= 0xC000_0000)
+    }
 }

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn load_crate_from_dir_seeds_source_module_cache() {
-    let temp_dir = std::env::temp_dir().join(format!(
+    let temp_dir = canonical_temp_dir().join(format!(
         "rock_crate_context_source_cache_{}",
         std::process::id()
     ));
@@ -37,7 +37,7 @@ path = "src/lib.rk"
 
 #[test]
 fn load_crate_from_dir_uses_source_database_module_graph() {
-    let dir = std::env::temp_dir().join(format!("rock_crate_source_graph_{}", std::process::id()));
+    let dir = canonical_temp_dir().join(format!("rock_crate_source_graph_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
@@ -74,7 +74,7 @@ fn load_crate_from_dir_uses_source_database_module_graph() {
 
 #[test]
 fn load_crate_from_dir_with_source_providers_loads_virtual_modules() {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = canonical_temp_dir().join(format!(
         "rock_crate_virtual_source_provider_{}",
         std::process::id()
     ));
@@ -110,7 +110,7 @@ fn load_crate_from_dir_with_source_providers_loads_virtual_modules() {
 
 #[test]
 fn load_crate_from_dir_with_source_providers_loads_artifact_modules() {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = canonical_temp_dir().join(format!(
         "rock_crate_artifact_source_provider_{}",
         std::process::id()
     ));
@@ -148,7 +148,7 @@ fn load_crate_from_dir_with_source_providers_loads_artifact_modules() {
 
 #[test]
 fn load_crate_with_dependencies_with_source_providers_loads_nested_virtual_modules() {
-    let root = std::env::temp_dir().join(format!(
+    let root = canonical_temp_dir().join(format!(
         "rock_crate_dependency_virtual_provider_{}",
         std::process::id()
     ));
@@ -192,7 +192,7 @@ fn load_crate_with_dependencies_with_source_providers_loads_nested_virtual_modul
 
 #[test]
 fn load_crate_from_dir_reports_missing_lib_through_source_database() {
-    let dir = std::env::temp_dir().join(format!("rock_crate_missing_lib_{}", std::process::id()));
+    let dir = canonical_temp_dir().join(format!("rock_crate_missing_lib_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
@@ -211,4 +211,14 @@ fn load_crate_from_dir_reports_missing_lib_through_source_database() {
     assert!(!error.contains("Lib path"), "{error}");
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir();
+    if cfg!(unix) {
+        dir.canonicalize().unwrap()
+    } else {
+        dir
+    }
 }

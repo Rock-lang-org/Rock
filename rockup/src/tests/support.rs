@@ -22,7 +22,8 @@ pub(super) fn temp_test_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("rockup_{}_{}", name, id));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    dir
+    // Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
+    if cfg!(unix) { dir.canonicalize().unwrap() } else { dir }
 }
 
 pub(super) fn fake_home(root: PathBuf) -> RockupHome {

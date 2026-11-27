@@ -2,6 +2,7 @@ use crate::std_cache_key::{std_cache_compiler_stamp, std_cache_key};
 use std::fs;
 use std::io::Read;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -419,7 +420,8 @@ impl Drop for TestDirCleanup {
     }
 }
 
-pub(crate) fn child_exited_without_reaping(child: &Child) -> Result<bool, std::io::Error> {
+#[cfg(unix)]
+pub(crate) fn child_exited_without_reaping(child: &mut Child) -> Result<bool, std::io::Error> {
     let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
     let result = unsafe {
         libc::waitid(
@@ -435,16 +437,36 @@ pub(crate) fn child_exited_without_reaping(child: &Child) -> Result<bool, std::i
     Ok(unsafe { info.assume_init().si_pid() } != 0)
 }
 
+#[cfg(unix)]
 pub(crate) fn terminate_test_command_group(child: &Child) -> Result<(), std::io::Error> {
-    // A negative PID targets the child's process group; ESRCH only means it already exited.
+    // A negative PID targets the child's process group; ESRCH only means it already
+    // exited. Darwin reports EPERM instead when only unreaped zombies remain.
     let result = unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
     if result != 0 {
         let error = std::io::Error::last_os_error();
-        if error.raw_os_error() != Some(libc::ESRCH) {
+        if !matches!(error.raw_os_error(), Some(libc::ESRCH))
+            && !(cfg!(target_os = "macos") && error.raw_os_error() == Some(libc::EPERM))
+        {
             return Err(error);
         }
     }
     Ok(())
+}
+
+// Windows has no non-reaping wait; Child caches the status try_wait collects.
+#[cfg(windows)]
+pub(crate) fn child_exited_without_reaping(child: &mut Child) -> Result<bool, std::io::Error> {
+    Ok(child.try_wait()?.is_some())
+}
+
+// Windows has no process groups: kill the direct child, which is a no-op once
+// it has exited.
+#[cfg(windows)]
+pub(crate) fn terminate_test_command_group(child: &mut Child) -> Result<(), std::io::Error> {
+    match child.kill() {
+        Err(error) if error.kind() != std::io::ErrorKind::InvalidInput => Err(error),
+        _ => Ok(()),
+    }
 }
 
 pub(crate) fn terminate_and_collect_test_command(
@@ -468,6 +490,7 @@ pub(crate) fn terminate_and_collect_test_command(
 
 pub(crate) fn run_test_command(command: &mut Command) -> Output {
     let executable = command.get_program().to_string_lossy().into_owned();
+    #[cfg(unix)]
     command.process_group(0);
     let mut child = command
         .stdout(Stdio::piped())
@@ -490,7 +513,7 @@ pub(crate) fn run_test_command(command: &mut Command) -> Output {
     });
     let started = Instant::now();
     loop {
-        match child_exited_without_reaping(&child) {
+        match child_exited_without_reaping(&mut child) {
             Ok(true) => break,
             Ok(false) if started.elapsed() < TEST_PROCESS_TIMEOUT => {
                 std::thread::sleep(Duration::from_millis(10));
@@ -534,7 +557,7 @@ pub(crate) fn run_test_command(command: &mut Command) -> Output {
             }
         }
     }
-    if let Err(error) = terminate_test_command_group(&child) {
+    if let Err(error) = terminate_test_command_group(&mut child) {
         let status = child.wait().expect("exited child must be reaped");
         drop(stdout_reader);
         drop(stderr_reader);

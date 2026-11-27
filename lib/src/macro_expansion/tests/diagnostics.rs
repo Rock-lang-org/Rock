@@ -99,6 +99,8 @@ fn macro_expansion_depth_trace_ignores_unrelated_latest_expansion() {
         .any(|label| label.message.contains("expanded from macro 'known'")));
 }
 
+// The fake proc-macro host is a shell script.
+#[cfg(unix)]
 #[test]
 fn generated_parse_errors_point_back_to_macro_invocation_source() {
     let config = test_config();

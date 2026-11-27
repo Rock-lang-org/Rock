@@ -1,5 +1,6 @@
 use std::fs;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};

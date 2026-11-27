@@ -107,7 +107,8 @@ pub(crate) fn temp_test_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("rock_cli_{}_{}_{}", name, std::process::id(), id));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    dir
+    // Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
+    if cfg!(unix) { dir.canonicalize().unwrap() } else { dir }
 }
 
 pub(crate) fn write_package(
@@ -258,11 +259,25 @@ fn isolated_test_overrides_are_child_local() {
 
 #[test]
 fn test_run_command_output_captures_child_stdout_and_stderr() {
-    let mut command = ProcessCommand::new("sh");
-    command.args([
-        "-c",
-        "printf visible-stdout; printf visible-stderr >&2; exit 3",
-    ]);
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = ProcessCommand::new("sh");
+        command.args([
+            "-c",
+            "printf visible-stdout; printf visible-stderr >&2; exit 3",
+        ]);
+        command
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = ProcessCommand::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            "[Console]::Out.Write('visible-stdout'); [Console]::Error.Write('visible-stderr'); exit 3",
+        ]);
+        command
+    };
 
     let output = run_command_output(&mut command);
 

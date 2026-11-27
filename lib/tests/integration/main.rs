@@ -50,6 +50,8 @@ mod signatureless_inference;
 mod std_cache;
 mod std_conversions;
 #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
+// Interposes POSIX libc calls through a C shim linked with the Linux cc driver.
+#[cfg(target_os = "linux")]
 mod std_discard_errors;
 mod std_iteration;
 mod string_methods;

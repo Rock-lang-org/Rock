@@ -113,7 +113,7 @@ fn regression_retires_diagnostics_when_the_last_document_leaves_a_target() {
 
 #[test]
 fn mixed_package_binary_entries_analyze_with_their_own_library() {
-    let root = std::env::temp_dir().join(format!("rock_lsp_multi_target_{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rock_lsp_multi_target_{}", std::process::id()));
     std::fs::create_dir_all(root.join("src/bin")).unwrap();
     std::fs::write(
         root.join("rock.toml"),
@@ -293,7 +293,7 @@ fn open_buffers_for_the_same_target_share_analysis() {
     use tower_lsp::lsp_types::{DidOpenTextDocumentParams, TextDocumentItem};
     use tower_lsp::{LanguageServer, LspService};
 
-    let root = std::env::temp_dir().join(format!("rock_lsp_shared_target_{}", std::process::id()));
+    let root = canonical_temp_dir().join(format!("rock_lsp_shared_target_{}", std::process::id()));
     let src = root.join("src");
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(
@@ -420,4 +420,14 @@ fn analysis_follows_the_configured_target() {
 
     assert!(analyze_for(Some("x86_64-pc-windows-msvc")).is_ok());
     assert!(analyze_for(Some("x86_64-unknown-linux-gnu")).is_err());
+}
+
+// Darwin's temp dir is a symlink into /private, and the tools report resolved paths.
+fn canonical_temp_dir() -> std::path::PathBuf {
+    let dir = std::env::temp_dir();
+    if cfg!(unix) {
+        dir.canonicalize().unwrap()
+    } else {
+        dir
+    }
 }

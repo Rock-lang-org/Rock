@@ -6,9 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod diagnostics;
 mod matching;
+// The fake proc-macro host is a shell script.
+#[cfg(unix)]
 mod proc_macros;
 mod repetition;
 
+#[cfg(unix)]
 fn proc_macro_artifact_with_response(
     macro_name: &str,
     response: proc_macro::ProcMacroResponse,

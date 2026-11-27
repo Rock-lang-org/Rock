@@ -49,6 +49,8 @@ main = ->
     assert_eq!(output.stdout, expected);
 }
 
+// Calls Linux's three-argument std::ffi::libc::open binding directly.
+#[cfg(target_os = "linux")]
 #[test]
 fn test_read_to_string_reports_errors() {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);

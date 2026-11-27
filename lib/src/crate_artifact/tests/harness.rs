@@ -1,5 +1,7 @@
 use super::*;
 
+// Descendant cleanup relies on Unix process groups.
+#[cfg(unix)]
 #[test]
 fn bounded_runner_kills_descendants_holding_pipes_open() {
     let started = Instant::now();
@@ -16,6 +18,8 @@ fn bounded_runner_kills_descendants_holding_pipes_open() {
     );
 }
 
+// Descendant cleanup relies on Unix process groups.
+#[cfg(unix)]
 #[test]
 fn bounded_runner_kills_descendants_after_parent_exits() {
     let started = Instant::now();

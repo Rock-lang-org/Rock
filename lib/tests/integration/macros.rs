@@ -2,6 +2,7 @@ use crate::support::*;
 use bincode::Options;
 use serde::Serialize;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -174,6 +175,8 @@ macro secret
     assert!(private.contains("Unknown macro '%secret'"), "{private:?}");
 }
 
+// The fake proc-macro host is a shell script.
+#[cfg(unix)]
 fn proc_macro_host_with_response(
     response: rock_lib::macro_expansion::proc_macro::ProcMacroResponse,
 ) -> (
@@ -304,6 +307,7 @@ fn encode_generated_main_tokens() -> Vec<u8> {
         .unwrap()
 }
 
+#[cfg(unix)]
 #[test]
 fn test_function_like_proc_macro_expands_through_public_macro_api() {
     let config = rock_lib::Config {

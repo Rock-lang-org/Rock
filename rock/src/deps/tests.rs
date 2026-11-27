@@ -190,6 +190,7 @@ fn pinned_dependency_uses_project_cache_without_network() {
 
 /// Commits `rock.toml` plus `links` (name, target) as symbolic links into a
 /// fresh repository at `source` and returns the commit ID.
+#[cfg(unix)]
 fn commit_fixture(source: &Path, links: &[(&str, &str)]) -> String {
     std::fs::create_dir_all(source).unwrap();
     let git = |args: &[&str]| {
@@ -221,6 +222,8 @@ fn commit_fixture(source: &Path, links: &[(&str, &str)]) -> String {
     git(&["rev-parse", "HEAD"])
 }
 
+// Creating symlinks on Windows needs Developer Mode or elevation.
+#[cfg(unix)]
 #[test]
 fn checkouts_reject_symbolic_links_leaving_the_checkout() {
     let root = std::env::temp_dir().join(format!("rock-git-symlink-test-{}", std::process::id()));

@@ -15,9 +15,19 @@ fn test_progress_command_preserves_child_exit_status() {
     let root = temp_test_dir("progress_child_status");
     write_package(&root, "app", "src/main.rk", &[], "main = !-> ()\n");
     let package = load_package(root.clone());
-    let status = run_command(Command::new("sh").args(["-c", "exit 7"]), &package, None).unwrap();
+    let status = run_command(&mut exit_with_seven(), &package, None).unwrap();
     assert_eq!(status.code(), Some(7));
     let _ = std::fs::remove_dir_all(root);
+}
+
+fn exit_with_seven() -> Command {
+    #[cfg(windows)]
+    let (shell, flag) = ("cmd", "/C");
+    #[cfg(not(windows))]
+    let (shell, flag) = ("sh", "-c");
+    let mut command = Command::new(shell);
+    command.args([flag, "exit 7"]);
+    command
 }
 
 #[test]
