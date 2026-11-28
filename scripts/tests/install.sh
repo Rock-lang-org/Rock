@@ -94,7 +94,14 @@ done
 run_case invalid-version failure v../escape
 run_case bare-version failure 0.1.0
 run_case extra-argument failure stable extra
-TEST_OS=Darwin
+# macOS hosts select their own manager asset.
+TEST_OS=Darwin TEST_ARCH=arm64 EXPECTED_TARGET=aarch64-apple-darwin
+export TEST_OS TEST_ARCH EXPECTED_TARGET
+run_case darwin-arm64 success
+TEST_ARCH=x86_64 EXPECTED_TARGET=x86_64-apple-darwin
+run_case darwin-x86_64 success
+unset TEST_OS TEST_ARCH EXPECTED_TARGET
+TEST_OS=FreeBSD
 export TEST_OS
 run_case unsupported-os failure
 unset TEST_OS
@@ -108,6 +115,7 @@ run_case old-glibc failure
 TEST_LIBC=musl
 run_case musl failure
 unset TEST_LIBC
+# rockup unpacks toolchains itself: the system tar does not matter.
 TEST_TAR=bsdtar
 export TEST_TAR
-run_case non-gnu-tar failure
+run_case non-gnu-tar success

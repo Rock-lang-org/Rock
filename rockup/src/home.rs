@@ -70,7 +70,15 @@ pub(crate) fn validate_name(name: &str) -> Result<(), String> {
 }
 
 pub(crate) fn home_dir() -> Result<PathBuf, String> {
+    // PowerShell and cmd set USERPROFILE; Git Bash and MSYS also set HOME.
     env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .or_else(|| {
+            cfg!(windows)
+                .then(|| env::var_os("USERPROFILE"))
+                .flatten()
+                .filter(|home| !home.is_empty())
+        })
         .map(PathBuf::from)
         .ok_or_else(|| "Failed to resolve HOME for rockup".to_string())
 }

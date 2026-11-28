@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build one matched compiler/std distribution; uploading is explicitly opt-in.
+# Build one matched compiler/std distribution for this host's target;
+# uploading is explicitly opt-in.
 set -euo pipefail
 export LC_ALL=C
 unset TAR_OPTIONS
@@ -14,20 +15,40 @@ root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 notes=$root/docs/release-notes/$tag.md
 [[ -s $notes ]] || die "Missing release notes: $notes"
-target=x86_64-unknown-linux-gnu
-[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || die "Only $target is supported"
-for tool in cargo cc tar gzip sha256sum git ldd; do
+case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) target=x86_64-unknown-linux-gnu ;;
+    Darwin-arm64) target=aarch64-apple-darwin ;;
+    Darwin-x86_64) target=x86_64-apple-darwin ;;
+    MINGW64_NT*-x86_64 | MSYS_NT*-x86_64) target=x86_64-pc-windows-msvc ;;
+    *) die "Unsupported release host $(uname -s) $(uname -m)" ;;
+esac
+exe=
+[[ $target == *-windows-* ]] && exe=.exe
+case $target in
+    *-linux-*) tools=(cc ldd) ;;
+    *-apple-*) tools=(cc otool) ;;
+    *-windows-*) tools=(link.exe dumpbin) ;;
+esac
+for tool in cargo tar gzip git perl "${tools[@]}"; do
     command -v "$tool" >/dev/null || die "Missing command: $tool"
 done
+if command -v sha256sum >/dev/null; then
+    sha256() { sha256sum "$@"; }
+else
+    command -v shasum >/dev/null || die 'Missing command: sha256sum or shasum'
+    sha256() { shasum -a 256 "$@"; }
+fi
+# Darwin's tar would add AppleDouble `._*` files for extended attributes.
+export COPYFILE_DISABLE=1
 if [[ -n ${LLVM_SYS_180_PREFIX:-} ]]; then
-    llvm_config=$LLVM_SYS_180_PREFIX/bin/llvm-config
+    llvm_config=$LLVM_SYS_180_PREFIX/bin/llvm-config$exe
 else
     llvm_config=$(command -v llvm-config-18 || command -v llvm-config) || die 'Install LLVM 18 development files and set LLVM_SYS_180_PREFIX'
 fi
 [[ $("$llvm_config" --version) == 18.* ]] || die 'Release builds require LLVM 18; set LLVM_SYS_180_PREFIX to its installation'
 "$llvm_config" --link-static --libfiles >/dev/null || die 'LLVM 18 static archives are required (Ubuntu: llvm-18-dev libpolly-18-dev)'
 export LLVM_SYS_180_PREFIX
-LLVM_SYS_180_PREFIX=$("$llvm_config" --prefix)
+LLVM_SYS_180_PREFIX=$("$llvm_config" --prefix | tr -d '\r')
 # Keep --version output consistent with the release tag.
 for package in rock rockc rockup rock-lsp lib rock-shared; do
     version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$package/Cargo.toml" | head -n 1)
@@ -52,24 +73,46 @@ trap 'rm -rf -- "$stage"' EXIT
 export CARGO_TARGET_DIR=$root/target
 cargo build --locked --release --target "$target" -p rock -p rockc -p rockup -p rock-lsp
 build=$CARGO_TARGET_DIR/$target/release
-# Check transitive dependencies too: a build-host LLVM must never hide a
-# missing end-user dependency in a release that appears to run locally.
+# A build-host LLVM must never hide a missing end-user dependency in a
+# release that appears to run locally.
 for binary in rock rockc rockup rock-lsp; do
-    dependencies=$(ldd "$build/$binary") || die "Cannot inspect runtime dependencies of $binary"
-    if grep -Ei 'lib(LLVM|clang)|not found' <<< "$dependencies"; then
-        die "$binary has a shared LLVM dependency or an unresolved runtime library"
-    fi
+    path=$build/$binary$exe
+    case $target in
+        *-linux-*)
+            # Transitive dependencies too.
+            dependencies=$(ldd "$path") || die "Cannot inspect runtime dependencies of $binary"
+            if grep -Ei 'lib(LLVM|clang)|not found' <<< "$dependencies"; then
+                die "$binary has a shared LLVM dependency or an unresolved runtime library"
+            fi
+            ;;
+        *-apple-*)
+            # Only the OS: libSystem and other /usr/lib or /System libraries.
+            dependencies=$(otool -L "$path" | tail -n +2) || die "Cannot inspect runtime dependencies of $binary"
+            if awk '$1 !~ "^(/usr/lib/|/System/Library/)"' <<< "$dependencies" | grep .; then
+                die "$binary links a library outside macOS itself"
+            fi
+            ;;
+        *-windows-*)
+            # Windows DLLs and the Visual C++ runtime, which the MSVC linker
+            # that Rock programs need also installs.
+            dependencies=$(dumpbin -nologo -dependents "$(cygpath -w "$path")" | tr -d '\r' |
+                awk '/^ *[^ ]+\.(dll|DLL)$/ { print $1 }') || die "Cannot inspect runtime dependencies of $binary"
+            if grep -Eiv '^(kernel32|advapi32|ntdll|user32|shell32|ole32|oleaut32|ws2_32|bcrypt|bcryptprimitives|crypt32|secur32|psapi|dbghelp|shlwapi|uuid|userenv|vcruntime140(_1)?|msvcp140|api-ms-win-[a-z0-9-]+)\.dll$' <<< "$dependencies"; then
+                die "$binary links a DLL outside Windows and the Visual C++ runtime"
+            fi
+            ;;
+    esac
 done
 toolchain=$stage/toolchain
 mkdir -p "$toolchain/bin" "$toolchain/share/licenses/llvm" "$stage/assets"
 install -m 644 "$root"/licenses/llvm/*.txt "$toolchain/share/licenses/llvm/"
 for binary in rock rockc rock-lsp; do
-    install -m 755 "$build/$binary" "$toolchain/bin/$binary"
+    install -m 755 "$build/$binary$exe" "$toolchain/bin/$binary$exe"
 done
-"$build/rockup" dev std package --path "$root/std" --sysroot "$toolchain" --copy-source --rockc "$build/rockc"
+"$build/rockup$exe" dev std package --path "$root/std" --sysroot "$toolchain" --copy-source --rockc "$build/rockc$exe"
 rm -rf -- "$toolchain/src/std/build" "$toolchain/src/std/target"
 manifest=$toolchain/lib/rocklib/$target/manifest.json
-sed -i "s/\"toolchain_version\": \"dev-[^\"]*\"/\"toolchain_version\": \"$tag\"/" "$manifest"
+perl -pi -e "s/\"toolchain_version\": \"dev-[^\"]*\"/\"toolchain_version\": \"$tag\"/" "$manifest"
 
 # Smoke-test the installed layout away from the checkout and all dev sysroots.
 mkdir -p "$stage/home" "$stage/project"
@@ -77,28 +120,32 @@ printf '[crate]\nname = "release_smoke"\nversion = "0.1.0"\n\n[[bin]]\npath = "m
 printf 'main = !->\n    "Hello, Rock!".println!\n' > "$stage/project/main.rk"
 (
     unset CARGO_TARGET_DIR ROCK_SYSROOT ROCKC ROCKUP_TOOLCHAIN
-    export HOME=$stage/home ROCKUP_HOME=$stage/home/.rockup SHELL=/bin/sh
+    # Never touch this machine's shell startup files or Windows user PATH.
+    export HOME=$stage/home ROCKUP_HOME=$stage/home/.rockup SHELL=/bin/sh ROCKUP_NO_MODIFY_PATH=1
     cd "$stage/project"
-    "$build/rockup" install "$tag" --path "$toolchain"
-    "$ROCKUP_HOME/bin/rockup" default "$tag"
-    "$ROCKUP_HOME/bin/rock" --version
-    "$ROCKUP_HOME/bin/rockc" --version
-    "$ROCKUP_HOME/bin/rock-lsp" --help > "$stage/lsp-help.log"
+    "$build/rockup$exe" install "$tag" --path "$toolchain"
+    bin=$ROCKUP_HOME/bin
+    "$bin/rockup$exe" default "$tag"
+    "$bin/rock$exe" --version
+    "$bin/rockc$exe" --version
+    "$bin/rock-lsp$exe" --help > "$stage/lsp-help.log"
     grep -F 'Usage: rock-lsp' "$stage/lsp-help.log"
-    "$ROCKUP_HOME/bin/rock" run > "$stage/smoke.log"
+    "$bin/rock$exe" run | tr -d '\r' > "$stage/smoke.log"
     grep -Fx 'Hello, Rock!' "$stage/smoke.log"
 )
 
 assets=$stage/assets
 tar --format=ustar -czf "$assets/rock-$tag-$target.tar.gz" -C "$toolchain" bin lib src share
 tar --format=ustar -czf "$assets/std-$tag-$target.tar.gz" -C "$toolchain/lib/rocklib/$target" .
-install -m 755 "$build/rockup" "$assets/rockup-$target"
+install -m 755 "$build/rockup$exe" "$assets/rockup-$target$exe"
+# Every host packages both installers; the copies are identical.
 install -m 644 scripts/install.sh "$assets/install.sh"
+install -m 644 scripts/install.ps1 "$assets/install.ps1"
 (
     cd "$assets"
-    for asset in *.tar.gz "rockup-$target" install.sh; do
-        sha256sum "$asset" > "$asset.sha256"
-        sha256sum --check "$asset.sha256"
+    for asset in *.tar.gz "rockup-$target$exe" install.sh install.ps1; do
+        sha256 "$asset" > "$asset.sha256"
+        sha256 --check "$asset.sha256"
     done
 )
 mv "$assets" "$out"

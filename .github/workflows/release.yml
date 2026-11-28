@@ -18,56 +18,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Builds, tests and packages each target natively. Every target runs the
+  # full test suite and the std platform smoke program before packaging.
   package:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install LLVM 18 static build dependencies
-        run: sudo apt-get update && sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev libxml2-dev zlib1g-dev libffi-dev libedit-dev libncurses-dev build-essential
-      - name: Test and package
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-          LLVM_SYS_180_PREFIX: /usr/lib/llvm-18
-        run: |
-          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
-          test -s "docs/release-notes/$RELEASE_TAG.md"
-          # CLI tests launch the standalone binaries from the Cargo target directory.
-          cargo build --locked --workspace --release --all-features
-          target/release/rockup dev std package --path "$PWD/std" --sysroot "$PWD/target" --copy-source --rockc "$PWD/target/release/rockc"
-          cargo test --locked --workspace --release --all-features
-          sh scripts/tests/install.sh
-          bash scripts/release.sh "$RELEASE_TAG"
-          bash scripts/tests/release.sh "dist/$RELEASE_TAG"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-assets
-          path: dist/${{ inputs.tag || github.ref_name }}/*
-          if-no-files-found: error
-
-  # Builds the toolchain natively on macOS and Windows, runs the std platform
-  # smoke program and the full test suite there. Linux is covered by `package`.
-  native:
     strategy:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            # Runtime checks run in a bare image: no LLVM, no Rust.
+            container: ubuntu:24.04
           - os: macos-latest
             triple: aarch64-apple-darwin
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
           - os: windows-2022
             triple: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 18 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev libxml2-dev zlib1g-dev libffi-dev libedit-dev libncurses-dev build-essential
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
 
       - name: Install LLVM 18 (macOS)
         if: runner.os == 'macOS'
@@ -106,17 +91,17 @@ jobs:
         if: runner.os == 'Windows'
         run: rm -f /usr/bin/link.exe && which link.exe
 
-      - name: Build toolchain
-        run: cargo build --locked --release -p rock -p rockc -p rockup
-
-      - name: Report target
+      - name: Check the release tag
         run: |
-          target/release/rockc --print target-triple
-          target/release/rockc --print cfg
-          test "$(target/release/rockc --print target-triple)" = "${{ matrix.triple }}"
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          test -s "docs/release-notes/$RELEASE_TAG.md"
 
-      - name: Package std
-        run: target/release/rockup dev std package --path "$PWD/std" --sysroot "$PWD/target" --copy-source --rockc "$PWD/target/release/rockc"
+      - name: Build toolchain
+        # CLI tests launch the standalone binaries from the Cargo target directory.
+        run: |
+          cargo build --locked --workspace --release --all-features
+          test "$(target/release/rockc --print target-triple)" = "${{ matrix.triple }}"
+          target/release/rockup dev std package --path "$PWD/std" --sysroot "$PWD/target" --copy-source --rockc "$PWD/target/release/rockc"
 
       - name: Platform smoke
         run: |
@@ -127,32 +112,81 @@ jobs:
           "$GITHUB_WORKSPACE/target/release/rock" run --release -- café-ü
 
       - name: Full test suite
-        run: cargo test --locked --workspace --release --no-fail-fast
+        run: cargo test --locked --workspace --release --all-features --no-fail-fast
 
+      - name: Installer tests
+        if: runner.os != 'Windows'
+        run: sh scripts/tests/install.sh
+
+      - name: Package
+        run: |
+          bash scripts/release.sh "$RELEASE_TAG"
+          bash scripts/tests/release.sh "dist/$RELEASE_TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.triple }}
+          path: dist/${{ inputs.tag || github.ref_name }}/*
+          if-no-files-found: error
+
+  # Installs the published bytes on a fresh machine of each OS, without LLVM
+  # or a Rust build tree, and compiles a program with them.
   runtime:
     needs: package
-    runs-on: ubuntu-24.04
-    container: ubuntu:24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            # Runtime checks run in a bare image: no LLVM, no Rust.
+            container: ubuntu:24.04
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - os: windows-2022
+            triple: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container || '' }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Install end-user prerequisites only
+      - name: Install end-user prerequisites only (Linux)
+        if: runner.os == 'Linux'
         run: apt-get update && apt-get install -y --no-install-recommends build-essential curl ca-certificates
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
-          name: release-assets
+          pattern: release-assets-*
+          merge-multiple: true
           path: dist/${{ inputs.tag || github.ref_name }}
+      # Puts MSVC's link.exe and the CRT/SDK libraries on PATH and LIB for
+      # rockc's linker invocation.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      # Git Bash puts coreutils' link.exe (hard links) ahead of MSVC's linker,
+      # which breaks both Cargo and rockc's link step.
+      - name: Remove Git's link.exe
+        if: runner.os == 'Windows'
+        run: rm -f /usr/bin/link.exe && which link.exe
+
       - name: Install and compile without LLVM
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          test -z "$(find /usr/lib -name 'libLLVM*.so*' -print -quit)"
-          ! command -v llvm-config
+          if [ "$RUNNER_OS" = Linux ]; then
+            test -z "$(find /usr/lib -name 'libLLVM*.so*' -print -quit)"
+            ! command -v llvm-config
+          fi
           bash scripts/tests/release.sh "dist/$RELEASE_TAG"
 
   draft:
-    needs: [runtime, native]
+    needs: runtime
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -162,7 +196,8 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
-          name: release-assets
+          pattern: release-assets-*
+          merge-multiple: true
           # The checkout's assets/ directory contains source images, not release files.
           path: dist/release-assets
       - name: Create draft release

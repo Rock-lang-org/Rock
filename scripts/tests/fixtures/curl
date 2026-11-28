@@ -13,7 +13,7 @@ output=$2
 url=$3
 [ "$#" = 3 ]
 printf '%s\n' "$url" >> "$TEST_ROOT/urls"
-asset=rockup-x86_64-unknown-linux-gnu
+asset=rockup-${EXPECTED_TARGET:-x86_64-unknown-linux-gnu}
 base=https://github.com/Rock-lang-org/Rock/releases/$EXPECTED_RELEASE_PATH
 case "$url" in
     "$base/$asset")

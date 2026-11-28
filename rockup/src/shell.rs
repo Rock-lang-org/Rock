@@ -98,6 +98,12 @@ pub(crate) fn link_proxies(home: &RockupHome, rockup_path: &Path) -> Result<(), 
 }
 
 pub(crate) fn ensure_shell_setup(home: &RockupHome) -> Result<(), String> {
+    if env::var_os(crate::constants::ROCKUP_NO_MODIFY_PATH_ENV)
+        .is_some_and(|value| !value.is_empty())
+    {
+        ensure_env_file(home)?;
+        return Ok(());
+    }
     #[cfg(windows)]
     {
         // Windows has no shell startup files to edit: put the bin directory

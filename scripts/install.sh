@@ -22,20 +22,30 @@ case "$channel" in
     *) die 'Usage: sh scripts/install.sh [vVERSION] (default: stable)' ;;
 esac
 
-[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] ||
-    die 'Only x86_64-unknown-linux-gnu is supported'
-for tool in curl sha256sum tar gzip getconf awk mktemp chmod rm; do
+case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) target=x86_64-unknown-linux-gnu ;;
+    Darwin-arm64) target=aarch64-apple-darwin ;;
+    Darwin-x86_64) target=x86_64-apple-darwin ;;
+    *) die "Unsupported platform $(uname -s) $(uname -m); on Windows use install.ps1" ;;
+esac
+for tool in curl awk mktemp chmod rm; do
     command -v "$tool" >/dev/null 2>&1 || die "Required command not found: $tool"
 done
-case "$(tar --version)" in
-    *'GNU tar'*) ;;
-    *) die 'GNU tar is required by rockup' ;;
-esac
-libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || die 'GNU glibc is required (not musl)'
-printf '%s\n' "$libc" | awk '
-    $1 == "glibc" { split($2, v, "."); if (v[1] > 2 || (v[1] == 2 && v[2] >= 39)) ok = 1 }
-    END { exit !ok }
-' || die 'Release binaries require glibc 2.39 or newer (Ubuntu 24.04 baseline)'
+if command -v sha256sum >/dev/null 2>&1; then
+    sha256_check() { sha256sum --check --strict "$1"; }
+elif command -v shasum >/dev/null 2>&1; then
+    sha256_check() { shasum -a 256 --check --strict "$1"; }
+else
+    die 'Required command not found: sha256sum or shasum'
+fi
+if [ "$target" = x86_64-unknown-linux-gnu ]; then
+    command -v getconf >/dev/null 2>&1 || die 'Required command not found: getconf'
+    libc=$(getconf GNU_LIBC_VERSION 2>/dev/null) || die 'GNU glibc is required (not musl)'
+    printf '%s\n' "$libc" | awk '
+        $1 == "glibc" { split($2, v, "."); if (v[1] > 2 || (v[1] == 2 && v[2] >= 39)) ok = 1 }
+        END { exit !ok }
+    ' || die 'Release binaries require glibc 2.39 or newer (Ubuntu 24.04 baseline)'
+fi
 
 [ -n "${HOME-}" ] || die 'HOME must be set and nonempty'
 ROCKUP_HOME=${ROCKUP_HOME-"$HOME/.rockup"}
@@ -53,7 +63,7 @@ umask 077
 stage=$(mktemp -d "${TMPDIR:-/tmp}/rock-install.XXXXXXXXXX") || die 'Cannot create temporary directory'
 trap 'rm -rf -- "$stage"' 0
 trap 'exit 1' HUP INT TERM
-asset=rockup-x86_64-unknown-linux-gnu
+asset=rockup-$target
 base=https://github.com/Rock-lang-org/Rock/releases/$release_path
 for file in "$asset" "$asset.sha256"; do
     curl --disable --fail --silent --show-error --location \
@@ -74,7 +84,7 @@ awk -v asset="$asset" '
     }
     END { exit (NR != 1 || bad) }
 ' "$stage/$asset.sha256" || die 'Invalid SHA-256 sidecar: expected one line naming the exact rockup asset'
-(cd "$stage" && sha256sum --check --strict "$asset.sha256") || die 'SHA-256 verification failed'
+(cd "$stage" && sha256_check "$asset.sha256") || die 'SHA-256 verification failed'
 chmod 700 "$stage/$asset"
 if [ -e "$installed" ] || [ -L "$installed" ]; then
     die "rockup appeared at $installed during download; refusing to overwrite it"

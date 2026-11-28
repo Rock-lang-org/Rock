@@ -1,4 +1,7 @@
 pub(crate) const ROCKUP_HOME_ENV: &str = "ROCKUP_HOME";
+/// Set to skip shell startup file and Windows user PATH changes, like
+/// rustup's `--no-modify-path`. The `env` script is still written.
+pub(crate) const ROCKUP_NO_MODIFY_PATH_ENV: &str = "ROCKUP_NO_MODIFY_PATH";
 pub(crate) const ROCKUP_TOOLCHAIN_ENV: &str = "ROCKUP_TOOLCHAIN";
 pub(crate) const ROCK_TOOLCHAIN_FILE: &str = "rock-toolchain.toml";
 pub(crate) const DEFAULT_TOOLCHAIN_FILE: &str = "default-toolchain";
