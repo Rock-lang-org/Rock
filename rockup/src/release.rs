@@ -157,8 +157,21 @@ fn checked_output(command: &mut Command) -> Result<Output, String> {
     Ok(output)
 }
 
+/// `curl` as found on PATH. Windows would otherwise look in the executable's
+/// own directory and System32 first, ignoring a curl the user put on PATH.
+fn curl_program() -> PathBuf {
+    let name = crate::constants::exe_name("curl");
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join(&name))
+                .find(|candidate| candidate.is_file())
+        })
+        .unwrap_or_else(|| PathBuf::from("curl"))
+}
+
 fn curl() -> Command {
-    let mut command = Command::new("curl");
+    let mut command = Command::new(curl_program());
     // Ignore user curl configuration, and forbid HTTP even across redirects.
     command.args([
         "--disable",

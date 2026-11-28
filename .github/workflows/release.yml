@@ -65,6 +65,9 @@ jobs:
           mkdir -p "$static"
           cp "$(brew --prefix zstd)/lib/libzstd.a" "$static/"
           echo "LIBRARY_PATH=$static" >> "$GITHUB_ENV"
+          # Homebrew's LLVM lib directory is on the link path; its libunwind
+          # and libc++ dylibs would shadow the macOS ones in /usr/lib.
+          find "$(brew --prefix llvm@18)/lib" -maxdepth 2 \( -name 'libunwind*.dylib' -o -name 'libc++*.dylib' \) -print -delete
 
       - name: Install LLVM 18 (Windows)
         if: runner.os == 'Windows'

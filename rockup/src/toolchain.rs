@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     constants::{
-        BIN_DIR, COMPONENTS_MANIFEST_NAME, LIB_DIR, ROCKC_BIN_NAME, ROCKUP_TOOLCHAIN_ENV,
+        exe_name, BIN_DIR, COMPONENTS_MANIFEST_NAME, LIB_DIR, ROCKC_BIN_NAME, ROCKUP_TOOLCHAIN_ENV,
         ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, STD_ARTIFACT_NAME, STD_OBJECT_NAME,
         TOOLCHAIN_MANIFEST_NAME,
     },
@@ -293,16 +293,16 @@ fn install_from_cargo_build_dir(source: &Path, destination: &Path) -> Result<(),
     })?;
 
     crate::fsutil::copy_file_with_permissions(
-        source.join(ROCK_BIN_NAME),
-        destination.join(BIN_DIR).join(ROCK_BIN_NAME),
+        source.join(exe_name(ROCK_BIN_NAME)),
+        destination.join(BIN_DIR).join(exe_name(ROCK_BIN_NAME)),
     )?;
     crate::fsutil::copy_file_with_permissions(
-        source.join(ROCKC_BIN_NAME),
-        destination.join(BIN_DIR).join(ROCKC_BIN_NAME),
+        source.join(exe_name(ROCKC_BIN_NAME)),
+        destination.join(BIN_DIR).join(exe_name(ROCKC_BIN_NAME)),
     )?;
     crate::fsutil::copy_file_with_permissions(
-        source.join(ROCK_LSP_BIN_NAME),
-        destination.join(BIN_DIR).join(ROCK_LSP_BIN_NAME),
+        source.join(exe_name(ROCK_LSP_BIN_NAME)),
+        destination.join(BIN_DIR).join(exe_name(ROCK_LSP_BIN_NAME)),
     )?;
 
     for optional_dir in [LIB_DIR, "share", "src"] {

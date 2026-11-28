@@ -2,7 +2,7 @@ use std::fs;
 
 use crate::{
     constants::{
-        BIN_DIR, DEFAULT_TOOLCHAIN_FILE, LIB_DIR, ROCKUP_TOOLCHAIN_ENV, ROCK_BIN_NAME,
+        exe_name, BIN_DIR, DEFAULT_TOOLCHAIN_FILE, LIB_DIR, ROCKUP_TOOLCHAIN_ENV, ROCK_BIN_NAME,
         ROCK_LSP_BIN_NAME, STD_ARTIFACT_NAME, TOOLCHAINS_DIR,
     },
     layout::host_target_triple,
@@ -50,12 +50,18 @@ fn test_install_toolchain_normalizes_cargo_build_dir_layout() {
 
     let installed = install_toolchain(&home, "stable", &source).unwrap();
 
-    assert!(installed.join(BIN_DIR).join(ROCK_BIN_NAME).exists());
     assert!(installed
         .join(BIN_DIR)
-        .join(crate::constants::ROCKC_BIN_NAME)
+        .join(exe_name(ROCK_BIN_NAME))
         .exists());
-    assert!(installed.join(BIN_DIR).join(ROCK_LSP_BIN_NAME).exists());
+    assert!(installed
+        .join(BIN_DIR)
+        .join(exe_name(crate::constants::ROCKC_BIN_NAME))
+        .exists());
+    assert!(installed
+        .join(BIN_DIR)
+        .join(exe_name(ROCK_LSP_BIN_NAME))
+        .exists());
     assert!(installed
         .join(LIB_DIR)
         .join("rocklib")
@@ -66,7 +72,7 @@ fn test_install_toolchain_normalizes_cargo_build_dir_layout() {
     assert!(home
         .root
         .join(BIN_DIR)
-        .join(crate::constants::ROCKC_BIN_NAME)
+        .join(exe_name(crate::constants::ROCKC_BIN_NAME))
         .exists());
     assert!(home.root.join(BIN_DIR).join(ROCK_LSP_BIN_NAME).exists());
 
