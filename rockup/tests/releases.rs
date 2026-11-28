@@ -1,15 +1,37 @@
-#![cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
+// Runs on every host with published release assets.
+#![cfg(any(
+    all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"),
+    target_os = "macos",
+    all(target_arch = "x86_64", target_os = "windows", target_env = "msvc")
+))]
 
 use std::{
+    collections::HashMap,
+    env::consts::EXE_SUFFIX,
     fs,
-    os::unix::fs::{symlink, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Output},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Mutex, OnceLock,
+    },
 };
 
-const TARGET: &str = "x86_64-unknown-linux-gnu";
+const TARGET: &str = if cfg!(target_os = "windows") {
+    "x86_64-pc-windows-msvc"
+} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    "aarch64-apple-darwin"
+} else if cfg!(target_os = "macos") {
+    "x86_64-apple-darwin"
+} else {
+    "x86_64-unknown-linux-gnu"
+};
 static NEXT: AtomicU64 = AtomicU64::new(0);
+
+/// `name` with the host's executable suffix.
+fn exe(name: &str) -> String {
+    format!("{name}{EXE_SUFFIX}")
+}
 
 struct Fixture {
     root: PathBuf,
@@ -25,40 +47,7 @@ impl Fixture {
         fs::create_dir_all(root.join("tools")).unwrap();
         fs::create_dir_all(root.join("assets")).unwrap();
         fs::create_dir_all(root.join("user")).unwrap();
-        // A process-local transport fixture: production has no insecure URL or
-        // fixture override. Also assert the required curl security flags.
-        script(
-            &root.join("tools/curl"),
-            r#"
-case " $* " in *" --disable --fail --location "*) ;; *) exit 90;; esac
-case " $* " in *" --retry 3 "*) ;; *) exit 91;; esac
-case " $* " in *" --proto =https --proto-redir =https "*) ;; *) exit 92;; esac
-printf '%s\n' "$*" >> "$FIXTURE/requests"
-[ "${FAIL_DOWNLOAD:-}" != yes ] || exit 22
-output=
-latest=no
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --output) shift; output=$1 ;;
-        --write-out) shift; latest=yes ;;
-        https://*) url=$1 ;;
-    esac
-    shift
-done
-if [ "$url" = 'https://api.github.com/repos/Rock-lang-org/Rock/releases?per_page=100&page=1' ]; then
-    cat "$FIXTURE/releases.json"
-elif [ "$latest" = yes ]; then
-    [ "$url" = https://github.com/Rock-lang-org/Rock/releases/latest ] || exit 93
-    printf 'https://github.com/Rock-lang-org/Rock/releases/tag/v1.2.3'
-else
-    case "$url" in
-        https://github.com/Rock-lang-org/Rock/releases/download/v1.2.3/*) ;;
-        *) exit 93 ;;
-    esac
-    cp "$FIXTURE/assets/${url##*/}" "$output"
-fi
-"#,
-        );
+        copy_executable(&fake_curl(), &root.join("tools").join(exe("curl")));
         fs::write(root.join("releases.json"), "[]").unwrap();
         Self { root }
     }
@@ -81,6 +70,10 @@ fi
             .env("SHELL", "/bin/sh")
             .env("FIXTURE", &self.root)
             .current_dir(&self.root);
+        // Never change the test machine's user PATH in the registry.
+        if cfg!(windows) {
+            command.env("ROCKUP_NO_MODIFY_PATH", "1");
+        }
         command
     }
 
@@ -92,10 +85,7 @@ fi
         let source = self.root.join("source");
         fs::create_dir_all(source.join("bin")).unwrap();
         for binary in ["rock", "rockc", "rock-lsp"] {
-            script(
-                &source.join("bin").join(binary),
-                &format!("printf '{version}\\n'"),
-            );
+            fake_tool(&source.join("bin").join(exe(binary)), version);
         }
         let lib = source.join("lib/rocklib").join(TARGET);
         fs::create_dir_all(&lib).unwrap();
@@ -117,31 +107,31 @@ fi
             .join(format!("rock-v1.2.3-{TARGET}.tar.gz"))
     }
 
-    fn pack(&self, source: &Path, extra: &[&str]) {
-        let result = Command::new("tar")
-            .env_remove("TAR_OPTIONS")
-            .arg("-czf")
-            .arg(self.asset())
-            .arg("-C")
-            .arg(source)
-            .args(extra)
-            .arg(".")
-            .output()
-            .unwrap();
-        success(result);
+    /// Packs `source` as the release archive, plus any unsafe `extra` entries.
+    fn pack(&self, source: &Path, extra: &[Extra]) {
+        let file = fs::File::create(self.asset()).unwrap();
+        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+            file,
+            flate2::Compression::fast(),
+        ));
+        builder.follow_symlinks(false);
+        builder.append_dir_all(".", source).unwrap();
+        for entry in extra {
+            entry.append(&mut builder);
+        }
+        builder.into_inner().unwrap().finish().unwrap();
         self.sign(&self.asset());
     }
 
     fn sign(&self, asset: &Path) {
-        let result = Command::new("sha256sum")
-            .current_dir(asset.parent().unwrap())
-            .arg(asset.file_name().unwrap())
-            .output()
-            .unwrap();
-        assert!(result.status.success());
+        use sha2::Digest;
+        let hash: String = sha2::Sha256::digest(fs::read(asset).unwrap())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         fs::write(
             PathBuf::from(format!("{}.sha256", asset.display())),
-            result.stdout,
+            format!("{hash}  {}\n", asset.file_name().unwrap().to_string_lossy()),
         )
         .unwrap();
     }
@@ -166,35 +156,122 @@ impl Drop for Fixture {
     }
 }
 
-fn assert_same_file(path: &Path, expected: &Path) {
-    use std::os::unix::fs::MetadataExt;
-    let (path_meta, expected_meta) = (fs::metadata(path).unwrap(), fs::metadata(expected).unwrap());
-    assert_eq!(
-        (path_meta.dev(), path_meta.ino()),
-        (expected_meta.dev(), expected_meta.ino()),
-        "{} must be a hard link to {}",
-        path.display(),
-        expected.display()
-    );
+/// Archive entries rockup must refuse, written with raw headers because the
+/// tar crate's checked setters reject them.
+enum Extra {
+    Regular(&'static str),
+    Symlink(&'static str, &'static str),
+    HardLink(&'static str, &'static str),
+    /// A safe header name whose PAX `path` record overrides it.
+    PaxPath(&'static str),
 }
 
-fn script(path: &Path, body: &str) {
-    fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+impl Extra {
+    fn append<W: std::io::Write>(&self, builder: &mut tar::Builder<W>) {
+        let (name, kind, link) = match *self {
+            Extra::Regular(name) => (name, tar::EntryType::Regular, None),
+            Extra::Symlink(name, target) => (name, tar::EntryType::Symlink, Some(target)),
+            Extra::HardLink(name, target) => (name, tar::EntryType::Link, Some(target)),
+            Extra::PaxPath(path) => {
+                builder
+                    .append_pax_extensions([("path", path.as_bytes())])
+                    .unwrap();
+                ("pax-entry", tar::EntryType::Regular, None)
+            }
+        };
+        let mut header = tar::Header::new_ustar();
+        header.set_entry_type(kind);
+        header.set_mode(0o644);
+        header.set_size(0);
+        header.as_old_mut().name[..name.len()].copy_from_slice(name.as_bytes());
+        if let Some(link) = link {
+            header.as_old_mut().linkname[..link.len()].copy_from_slice(link.as_bytes());
+        }
+        header.set_cksum();
+        builder.append(&header, std::io::empty()).unwrap();
+    }
 }
 
-fn copy_manager(path: &Path) {
-    // Keep writable executable descriptors out of the multithreaded test process:
-    // concurrent child spawns can inherit them until exec and cause ETXTBSY.
-    // Waiting for cp also ensures its writable descriptor is closed before use.
+/// Compiles a helper program once per test process.
+fn compiled(name: &str, source: &str) -> PathBuf {
+    static BUILT: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+    let mut built = BUILT
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(path) = built.get(name) {
+        return path.clone();
+    }
+    let dir = canonical_temp_dir().join(format!("rockup-release-tools-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("{name}.rs"));
+    let binary = dir.join(exe(name));
+    fs::write(&file, source).unwrap();
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
     success(
-        Command::new("cp")
-            .arg("--")
-            .arg(env!("CARGO_BIN_EXE_rockup"))
-            .arg(path)
+        Command::new(rustc)
+            .args(["--edition", "2021", "-o"])
+            .arg(&binary)
+            .arg(&file)
             .output()
             .unwrap(),
     );
+    built.insert(name.to_string(), binary.clone());
+    binary
+}
+
+fn fake_curl() -> PathBuf {
+    compiled("fake_curl", include_str!("fixtures/fake_curl.rs"))
+}
+
+/// Installs at `path` a program that prints `text` and exits successfully,
+/// standing in for a toolchain binary or a downloaded manager.
+fn fake_tool(path: &Path, text: &str) {
+    assert!(text.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-'));
+    let source = format!("fn main() {{ println!(\"{text}\"); }}\n");
+    copy_executable(&compiled(&format!("fake_tool_{text}"), &source), path);
+}
+
+fn copy_executable(from: &Path, to: &Path) {
+    let _ = fs::remove_file(to);
+    if cfg!(unix) {
+        // Keep writable executable descriptors out of the multithreaded test
+        // process: concurrent child spawns can inherit them until exec and
+        // cause ETXTBSY. Waiting for cp also closes its descriptor first.
+        success(
+            Command::new("cp")
+                .arg("--")
+                .arg(from)
+                .arg(to)
+                .output()
+                .unwrap(),
+        );
+    } else {
+        fs::copy(from, to).unwrap();
+    }
+}
+
+fn copy_manager(path: &Path) {
+    copy_executable(Path::new(env!("CARGO_BIN_EXE_rockup")), path);
+}
+
+/// Proxies are hard links to the manager on Unix; on Windows they may be
+/// copies, so the bytes must match.
+fn assert_same_file(path: &Path, expected: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let (left, right) = (fs::metadata(path).unwrap(), fs::metadata(expected).unwrap());
+        assert_eq!(
+            (left.dev(), left.ino()),
+            (right.dev(), right.ino()),
+            "{} must be a hard link to {}",
+            path.display(),
+            expected.display()
+        );
+    }
+    #[cfg(not(unix))]
+    assert_eq!(fs::read(path).unwrap(), fs::read(expected).unwrap());
 }
 
 fn success(output: Output) {
@@ -219,7 +296,7 @@ fn self_install_persists_only_manager_then_install_fetches_toolchain() {
             .unwrap(),
     );
     fs::remove_file(downloaded).unwrap();
-    let manager = fixture.root.join("home/bin/rockup");
+    let manager = fixture.root.join("home/bin").join(exe("rockup"));
     assert!(!fixture.root.join("requests").exists());
     let list = fixture.command_for(&manager).arg("list").output().unwrap();
     assert!(String::from_utf8_lossy(&list.stdout)
@@ -227,10 +304,11 @@ fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     success(list);
     // Proxies are hard links to the persisted manager.
     for binary in ["rock", "rockc", "rock-lsp"] {
-        assert_same_file(&fixture.root.join("home/bin").join(binary), &manager);
+        assert_same_file(&fixture.root.join("home/bin").join(exe(binary)), &manager);
     }
     assert!(fixture.root.join("home/env").is_file());
-    assert!(fixture.root.join("user/.profile").is_file());
+    // Windows updates the user PATH instead of shell startup files.
+    assert_eq!(fixture.root.join("user/.profile").is_file(), cfg!(unix));
     assert!(!fixture.root.join("home/default-toolchain").exists());
     let requests = fs::read_to_string(fixture.root.join("requests")).unwrap();
     assert_eq!(requests.lines().count(), 1);
@@ -269,7 +347,8 @@ fn install_update_default_and_local_path() {
     success(fixture.run(&["default", "1.2.3"]));
     assert!(fixture
         .root
-        .join("home/toolchains/v1.2.3/bin/rock")
+        .join("home/toolchains/v1.2.3/bin")
+        .join(exe("rock"))
         .is_file());
     assert_eq!(
         fs::read_to_string(fixture.root.join("home/default-toolchain"))
@@ -284,24 +363,34 @@ fn install_update_default_and_local_path() {
     assert!(!fixture.root.join("home/toolchains/v1.2.3").exists());
     success(fixture.run(&["install", "1.2.3"]));
 
+    // Long names use a tar extension record.
     let long_name = "a".repeat(140);
-    fs::write(source.join(&long_name), "long PAX name").unwrap();
-    fs::set_permissions(source.join("bin/rock"), fs::Permissions::from_mode(0o6755)).unwrap();
-    fixture.pack(&source, &["--format=pax"]);
+    fs::write(source.join(&long_name), "long name").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(source.join("bin/rock"), fs::Permissions::from_mode(0o6755)).unwrap();
+    }
+    fixture.pack(&source, &[]);
     success(fixture.run(&["update"]));
     assert!(fixture
         .root
         .join("home/toolchains/stable")
         .join(long_name)
         .is_file());
-    assert_eq!(
-        fs::metadata(fixture.root.join("home/toolchains/stable/bin/rock"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o7777,
-        0o755
-    );
+    // Set-id bits never survive extraction.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(fixture.root.join("home/toolchains/stable/bin/rock"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o755
+        );
+    }
 }
 
 #[test]
@@ -375,23 +464,28 @@ fn failed_updates_preserve_installed_toolchain() {
     assert!(!fixture.run(&["update"]).status.success());
     fixture.assert_old();
 
-    fs::remove_file(source.join("bin/rockc")).unwrap();
+    let rockc = source.join("bin").join(exe("rockc"));
+    fs::remove_file(&rockc).unwrap();
     fixture.pack(&source, &[]);
     assert!(!fixture.run(&["update"]).status.success());
     fixture.assert_old();
 
-    fs::create_dir(source.join("bin/rockc")).unwrap();
+    fs::create_dir(&rockc).unwrap();
     fixture.pack(&source, &[]);
     assert!(!fixture.run(&["update"]).status.success());
     fixture.assert_old();
 
-    fs::remove_dir(source.join("bin/rockc")).unwrap();
-    fixture.source("new");
-    fixture.pack(&source, &[]);
-    fs::remove_file(fixture.root.join("user/.profile")).unwrap();
-    fs::create_dir(fixture.root.join("user/.profile")).unwrap();
-    assert!(!fixture.run(&["update"]).status.success());
-    fixture.assert_old();
+    fs::remove_dir(&rockc).unwrap();
+    // A shell startup file that cannot be updated fails the update.
+    #[cfg(unix)]
+    {
+        fixture.source("new");
+        fixture.pack(&source, &[]);
+        fs::remove_file(fixture.root.join("user/.profile")).unwrap();
+        fs::create_dir(fixture.root.join("user/.profile")).unwrap();
+        assert!(!fixture.run(&["update"]).status.success());
+        fixture.assert_old();
+    }
 }
 
 #[test]
@@ -401,28 +495,20 @@ fn unsafe_archives_and_sidecars_are_rejected() {
     fixture.pack(&source, &[]);
     success(fixture.run(&["install", "stable"]));
 
-    for transform in ["s|^./|../|", "s|^./|/tmp/rockup-escape/|"] {
-        fixture.pack(&source, &["--transform", transform]);
+    for extra in [
+        Extra::Regular("../escape"),
+        Extra::Regular("/tmp/rockup-escape/rock"),
+        Extra::Symlink("link", "../../outside"),
+        Extra::HardLink("hardlink", "bin/rock"),
+        Extra::PaxPath("../escape"),
+    ] {
+        fixture.pack(&source, &[extra]);
         let output = fixture.run(&["update"]);
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("Unsafe archive entry"));
         fixture.assert_old();
     }
-
-    symlink("../../outside", source.join("link")).unwrap();
-    fixture.pack(&source, &[]);
-    assert!(!fixture.run(&["update"]).status.success());
-    fixture.assert_old();
-    fs::remove_file(source.join("link")).unwrap();
-    fs::hard_link(source.join("bin/rock"), source.join("hardlink")).unwrap();
-    fixture.pack(&source, &[]);
-    assert!(!fixture.run(&["update"]).status.success());
-    fixture.assert_old();
-
-    fs::remove_file(source.join("hardlink")).unwrap();
-    fixture.pack(&source, &["--format=pax", "--pax-option=path=../escape"]);
-    assert!(!fixture.run(&["update"]).status.success());
-    fixture.assert_old();
+    assert!(!fixture.root.join("escape").exists());
 
     let checksum = PathBuf::from(format!("{}.sha256", fixture.asset().display()));
     for contents in ["bad\n".into(), format!("{}  ../wrong\n", "0".repeat(64))] {
@@ -473,25 +559,29 @@ fn unsafe_names_are_rejected_without_network_or_outside_writes() {
     assert!(!fixture.run(&["proxy", "rock"]).status.success());
     assert!(!fixture.root.join("requests").exists());
 
-    fs::create_dir_all(fixture.root.join("home/toolchains")).unwrap();
-    let outside = fixture.source("outside");
-    symlink(&outside, fixture.root.join("home/toolchains/linked")).unwrap();
-    for args in [
-        vec!["default", "linked"],
-        vec!["remove", "linked"],
-        vec!["run", "linked", "rock"],
-    ] {
-        let output = fixture.run(&args);
-        assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("must not be a symlink"));
+    // Creating symlinks on Windows needs Developer Mode or elevation.
+    #[cfg(unix)]
+    {
+        fs::create_dir_all(fixture.root.join("home/toolchains")).unwrap();
+        let outside = fixture.source("outside");
+        std::os::unix::fs::symlink(&outside, fixture.root.join("home/toolchains/linked")).unwrap();
+        for args in [
+            vec!["default", "linked"],
+            vec!["remove", "linked"],
+            vec!["run", "linked", "rock"],
+        ] {
+            let output = fixture.run(&args);
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("must not be a symlink"));
+        }
+        assert!(outside.join("bin/rock").is_file());
     }
-    assert!(outside.join("bin/rock").is_file());
 }
 
 #[test]
 fn self_update_is_atomic_and_keeps_shim_destination() {
     let fixture = Fixture::new();
-    let executable = fixture.root.join("rockup");
+    let executable = fixture.root.join(exe("rockup"));
     copy_manager(&executable);
     let source = fixture.source("old");
     success(
@@ -502,17 +592,16 @@ fn self_update_is_atomic_and_keeps_shim_destination() {
             .unwrap(),
     );
     fs::remove_file(&executable).unwrap();
-    let executable = fixture.root.join("home/bin/rockup");
-    assert_same_file(&fixture.root.join("home/bin/rock"), &executable);
-    success(
-        fixture
-            .command_for(&fixture.root.join("home/bin/rock"))
-            .output()
-            .unwrap(),
-    );
+    let executable = fixture.root.join("home/bin").join(exe("rockup"));
+    let rock = fixture.root.join("home/bin").join(exe("rock"));
+    assert_same_file(&rock, &executable);
+    success(fixture.command_for(&rock).output().unwrap());
     let original = fs::read(&executable).unwrap();
-    let asset = fixture.root.join("assets").join(format!("rockup-{TARGET}"));
-    script(&asset, "printf 'updated-rockup\\n'");
+    let asset = fixture
+        .root
+        .join("assets")
+        .join(exe(&format!("rockup-{TARGET}")));
+    fake_tool(&asset, "updated-rockup");
     fixture.sign(&asset);
     fs::write(&asset, "bad checksum").unwrap();
     assert!(!fixture
@@ -523,7 +612,7 @@ fn self_update_is_atomic_and_keeps_shim_destination() {
         .status
         .success());
     assert_eq!(fs::read(&executable).unwrap(), original);
-    script(&asset, "printf 'updated-rockup\\n'");
+    fake_tool(&asset, "updated-rockup");
     fixture.sign(&asset);
     success(
         fixture
@@ -540,7 +629,10 @@ fn self_update_is_atomic_and_keeps_shim_destination() {
     success(output);
     // Proxies are relinked to the new manager, never left on the old file.
     for binary in ["rock", "rockc", "rock-lsp"] {
-        assert_same_file(&fixture.root.join("home/bin").join(binary), &executable);
+        assert_same_file(
+            &fixture.root.join("home/bin").join(exe(binary)),
+            &executable,
+        );
     }
     assert!(!fixture.root.join("home/bin/.rockup-self-update").exists());
 }

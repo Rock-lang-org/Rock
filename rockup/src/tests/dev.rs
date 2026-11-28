@@ -13,7 +13,7 @@ use crate::{
     layout::host_target_triple,
 };
 
-use super::support::{temp_test_dir, workspace_std_root, write_script};
+use super::support::{temp_test_dir, workspace_std_root, write_fake_tool};
 
 #[test]
 fn test_package_dev_std_writes_sysroot_layout() {
@@ -98,39 +98,13 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
-// Runs a fake toolchain binary written as a shell script.
-#[cfg(unix)]
 #[test]
 fn test_package_dev_std_passes_absolute_product_paths_for_relative_sysroot() {
     let temp_dir = temp_test_dir("package_dev_std_relative_sysroot");
     let capture_file = temp_dir.join("rockc-args.txt");
     let fake_rockc = temp_dir.join("rockc");
-    write_script(
-        &fake_rockc,
-        &format!(
-            r#"capture={}
-object=
-artifact=
-previous=
-for arg in "$@"; do
-  if [ "$previous" = "--emit-object" ]; then
-    object="$arg"
-  fi
-  if [ "$previous" = "--emit-artifact" ]; then
-    artifact="$arg"
-  fi
-  previous="$arg"
-done
-printf '%s\n%s\n' "$object" "$artifact" > "$capture"
-mkdir -p "$(dirname "$object")"
-mkdir -p "$(dirname "$artifact")"
-touch "$object"
-touch "$artifact"
-exit 0
-"#,
-            capture_file.display()
-        ),
-    );
+    write_fake_tool(&fake_rockc, &format!("products {}", capture_file.display()));
+    let fake_rockc = fake_rockc.with_file_name(crate::constants::exe_name("rockc"));
     let relative_sysroot = PathBuf::from(format!(
         "target/rockup_relative_sysroot_{}",
         std::process::id()

@@ -113,7 +113,7 @@ fn test_ensure_shell_config_is_idempotent() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-// Expects the home path verbatim; on Windows the shell escaping doubles its backslashes.
+// Shell startup files are Unix-only; Windows updates the user PATH instead.
 #[cfg(unix)]
 #[test]
 fn test_ensure_shell_config_uses_custom_rockup_home() {

@@ -159,3 +159,32 @@ fn test_cli_parses_dev_std_package_command() {
         other => panic!("unexpected command: {:?}", other),
     }
 }
+
+#[test]
+fn test_invoked_name_selects_a_proxied_binary() {
+    use std::ffi::OsStr;
+    for (invoked, expected) in [
+        ("rock", Some("rock")),
+        ("/home/user/.rockup/bin/rockc", Some("rockc")),
+        (
+            "C:\\Users\\me\\.rockup\\bin\\rock-lsp.exe",
+            Some("rock-lsp"),
+        ),
+        ("rock.exe", Some("rock")),
+        ("rockup", None),
+        ("rockup.exe", None),
+        ("rock-other", None),
+    ] {
+        // Windows separators only split paths on Windows; the stem is what counts.
+        let invoked = if cfg!(windows) {
+            invoked.to_string()
+        } else {
+            invoked.rsplit('\\').next().unwrap().to_string()
+        };
+        assert_eq!(
+            crate::proxied_binary(OsStr::new(&invoked)),
+            expected,
+            "{invoked}"
+        );
+    }
+}

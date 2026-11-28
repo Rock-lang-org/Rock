@@ -15,8 +15,8 @@ use crate::{
 };
 
 use super::support::{
-    fake_home, read_default_toolchain, temp_test_dir, write_fake_cargo_build_dir,
-    write_fake_toolchain_root, write_project_toolchain, write_script,
+    fake_home, read_default_toolchain, temp_test_dir, write_fake_cargo_build_dir, write_fake_tool,
+    write_fake_toolchain_root, write_project_toolchain,
 };
 
 #[test]
@@ -215,8 +215,6 @@ fn test_list_toolchains_marks_active_default() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-// Runs a fake toolchain binary written as a shell script.
-#[cfg(unix)]
 #[test]
 fn test_run_toolchain_command_prefers_toolchain_bin_in_path() {
     let temp_dir = temp_test_dir("run_toolchain_command");
@@ -225,9 +223,9 @@ fn test_run_toolchain_command_prefers_toolchain_bin_in_path() {
     let log_path = temp_dir.join("run.log");
 
     write_fake_toolchain_root(&source);
-    write_script(
+    write_fake_tool(
         &source.join(BIN_DIR).join(ROCK_BIN_NAME),
-        &format!("printf '%s' \"$1\" > {}\nexit 23\n", log_path.display()),
+        &format!("log-arg1 {}\nexit 23", log_path.display()),
     );
     install_toolchain(&home, "stable", &source).unwrap();
 
@@ -239,8 +237,6 @@ fn test_run_toolchain_command_prefers_toolchain_bin_in_path() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-// Runs a fake toolchain binary written as a shell script.
-#[cfg(unix)]
 #[test]
 fn test_proxy_toolchain_command_uses_default_selection() {
     let temp_dir = temp_test_dir("proxy_command");
@@ -256,8 +252,6 @@ fn test_proxy_toolchain_command_uses_default_selection() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-// Runs a fake toolchain binary written as a shell script.
-#[cfg(unix)]
 #[test]
 fn test_proxy_toolchain_command_supports_rock_lsp() {
     let temp_dir = temp_test_dir("proxy_lsp_command");
@@ -273,8 +267,6 @@ fn test_proxy_toolchain_command_supports_rock_lsp() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-// Runs a fake toolchain binary written as a shell script.
-#[cfg(unix)]
 #[test]
 fn test_proxy_toolchain_command_uses_project_pin() {
     let temp_dir = temp_test_dir("proxy_project_pin");
@@ -285,14 +277,8 @@ fn test_proxy_toolchain_command_uses_project_pin() {
 
     write_fake_toolchain_root(&stable_source);
     write_fake_toolchain_root(&nightly_source);
-    write_script(
-        &stable_source.join(BIN_DIR).join(ROCK_BIN_NAME),
-        "exit 17\n",
-    );
-    write_script(
-        &nightly_source.join(BIN_DIR).join(ROCK_BIN_NAME),
-        "exit 29\n",
-    );
+    write_fake_tool(&stable_source.join(BIN_DIR).join(ROCK_BIN_NAME), "exit 17");
+    write_fake_tool(&nightly_source.join(BIN_DIR).join(ROCK_BIN_NAME), "exit 29");
     install_toolchain(&home, "stable", &stable_source).unwrap();
     install_toolchain(&home, "nightly", &nightly_source).unwrap();
     set_default_toolchain(&home, "stable").unwrap();
@@ -306,8 +292,6 @@ fn test_proxy_toolchain_command_uses_project_pin() {
     let _ = fs::remove_dir_all(temp_dir);
 }
 
-// Runs a fake toolchain binary written as a shell script.
-#[cfg(unix)]
 #[test]
 fn test_run_command_sets_env_selected_toolchain() {
     let temp_dir = temp_test_dir("run_env_toolchain");
@@ -316,13 +300,9 @@ fn test_run_command_sets_env_selected_toolchain() {
     let log_path = temp_dir.join("env.log");
 
     write_fake_toolchain_root(&source);
-    write_script(
+    write_fake_tool(
         &source.join(BIN_DIR).join(ROCK_BIN_NAME),
-        &format!(
-            "printf '%s' \"${}\" > {}\nexit 0\n",
-            ROCKUP_TOOLCHAIN_ENV,
-            log_path.display()
-        ),
+        &format!("log-env {} {}", ROCKUP_TOOLCHAIN_ENV, log_path.display()),
     );
     install_toolchain(&home, "stable", &source).unwrap();
 
