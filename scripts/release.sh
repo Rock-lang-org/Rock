@@ -88,17 +88,16 @@ for binary in rock rockc rockup rock-lsp; do
         *-apple-*)
             # Only the OS: libSystem and other /usr/lib or /System libraries.
             dependencies=$(otool -L "$path" | tail -n +2) || die "Cannot inspect runtime dependencies of $binary"
-            if awk '$1 !~ "^(/usr/lib/|/System/Library/)"' <<< "$dependencies" | grep .; then
-                die "$binary links a library outside macOS itself"
-            fi
+            foreign=$(awk '$1 !~ "^(/usr/lib/|/System/Library/)" { print $1 }' <<< "$dependencies")
+            [[ -z $foreign ]] || die "$binary links libraries outside macOS itself: $foreign"
             ;;
         *-windows-*)
             # Windows DLLs and the Visual C++ runtime, which the MSVC linker
             # that Rock programs need also installs.
             dependencies=$(dumpbin -nologo -dependents "$(cygpath -w "$path")" | tr -d '\r' |
                 awk '/^ *[^ ]+\.(dll|DLL)$/ { print $1 }') || die "Cannot inspect runtime dependencies of $binary"
-            if grep -Eiv '^(kernel32|advapi32|ntdll|user32|shell32|ole32|oleaut32|ws2_32|bcrypt|bcryptprimitives|crypt32|secur32|psapi|dbghelp|shlwapi|uuid|userenv|vcruntime140(_1)?|msvcp140|api-ms-win-[a-z0-9-]+)\.dll$' <<< "$dependencies"; then
-                die "$binary links a DLL outside Windows and the Visual C++ runtime"
+            if foreign=$(grep -Eiv '^(kernel32|advapi32|ntdll|user32|shell32|ole32|oleaut32|ws2_32|bcrypt|bcryptprimitives|crypt32|secur32|psapi|dbghelp|shlwapi|uuid|userenv|vcruntime140(_1)?|msvcp140|api-ms-win-[a-z0-9-]+)\.dll$' <<< "$dependencies"); then
+                die "$binary links DLLs outside Windows and the Visual C++ runtime: $foreign"
             fi
             ;;
     esac

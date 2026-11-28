@@ -59,8 +59,12 @@ jobs:
         run: |
           brew install llvm@18 zstd
           echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
-          # Static LLVM archives link against Homebrew's zstd and friends.
-          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+          # LLVM's static archives need zstd. Offer the linker only Homebrew's
+          # static libzstd.a: release binaries must not load Homebrew dylibs.
+          static="$RUNNER_TEMP/static-libs"
+          mkdir -p "$static"
+          cp "$(brew --prefix zstd)/lib/libzstd.a" "$static/"
+          echo "LIBRARY_PATH=$static" >> "$GITHUB_ENV"
 
       - name: Install LLVM 18 (Windows)
         if: runner.os == 'Windows'
