@@ -78,7 +78,11 @@ fn test_install_toolchain_normalizes_cargo_build_dir_layout() {
         .join(BIN_DIR)
         .join(exe_name(crate::constants::ROCKC_BIN_NAME))
         .exists());
-    assert!(home.root.join(BIN_DIR).join(ROCK_LSP_BIN_NAME).exists());
+    assert!(home
+        .root
+        .join(BIN_DIR)
+        .join(exe_name(ROCK_LSP_BIN_NAME))
+        .exists());
 
     let _ = fs::remove_dir_all(temp_dir);
 }
