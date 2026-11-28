@@ -1,0 +1,176 @@
+name: Temporary release check
+on:
+  push:
+    branches: [tmp-215-release-check]
+permissions:
+  contents: read
+jobs:
+  # Builds, tests and packages each target natively. Every target runs the
+  # full test suite and the std platform smoke program before packaging.
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            # Runtime checks run in a bare image: no LLVM, no Rust.
+            container: ubuntu:24.04
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - os: windows-2022
+            triple: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: v0.7.4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM 18 (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y llvm-18-dev libpolly-18-dev libzstd-dev libxml2-dev zlib1g-dev libffi-dev libedit-dev libncurses-dev build-essential
+          echo "LLVM_SYS_180_PREFIX=/usr/lib/llvm-18" >> "$GITHUB_ENV"
+
+      - name: Install LLVM 18 (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm@18 zstd
+          echo "LLVM_SYS_180_PREFIX=$(brew --prefix llvm@18)" >> "$GITHUB_ENV"
+          # LLVM's static archives need zstd. Offer the linker only Homebrew's
+          # static libzstd.a: release binaries must not load Homebrew dylibs.
+          static="$RUNNER_TEMP/static-libs"
+          mkdir -p "$static"
+          cp "$(brew --prefix zstd)/lib/libzstd.a" "$static/"
+          echo "LIBRARY_PATH=$static" >> "$GITHUB_ENV"
+          # Homebrew's LLVM lib directory is on the link path; its libunwind
+          # and libc++ dylibs would shadow the macOS ones in /usr/lib.
+          find "$(brew --prefix llvm@18)/lib" -maxdepth 2 \( -name 'libunwind*.dylib' -o -name 'libc++*.dylib' \) -print -delete
+
+      - name: Install LLVM 18 (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Official LLVM release: llvm-config, static libraries and every
+          # backend, so cross-target tests (AArch64 Darwin) run here too.
+          curl -fsSL -o llvm.tar.xz https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-pc-windows-msvc.tar.xz
+          # GNU tar reads "D:" as a remote host: give it a POSIX path.
+          llvm="$(cygpath -u "$RUNNER_TEMP")/llvm"
+          mkdir -p "$llvm"
+          tar -xJf llvm.tar.xz -C "$llvm" --strip-components=1
+          test -x "$llvm/bin/llvm-config.exe"
+          echo "LLVM_SYS_180_PREFIX=$(cd "$llvm" && pwd -W)" >> "$GITHUB_ENV"
+          # llvm-config lists a static libxml2 as a system library. vcpkg's
+          # static build against the dynamic CRT matches Rust's default CRT.
+          "$VCPKG_INSTALLATION_ROOT/vcpkg" install libxml2:x64-windows-static-md
+          libs="$(cygpath -u "$VCPKG_INSTALLATION_ROOT")/installed/x64-windows-static-md/lib"
+          cp "$libs/libxml2.lib" "$llvm/lib/libxml2s.lib"
+
+      # Puts MSVC's link.exe and the CRT/SDK libraries on PATH and LIB for
+      # rockc's linker invocation.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      # Git Bash puts coreutils' link.exe (hard links) ahead of MSVC's linker,
+      # which breaks both Cargo and rockc's link step.
+      - name: Remove Git's link.exe
+        if: runner.os == 'Windows'
+        run: rm -f /usr/bin/link.exe && which link.exe
+
+      - name: Build toolchain
+        # CLI tests launch the standalone binaries from the Cargo target directory.
+        run: |
+          cargo build --locked --workspace --release --all-features
+          test "$(target/release/rockc --print target-triple)" = "${{ matrix.triple }}"
+          target/release/rockup dev std package --path "$PWD/std" --sysroot "$PWD/target" --copy-source --rockc "$PWD/target/release/rockc"
+
+      - name: Platform smoke
+        run: |
+          work="$RUNNER_TEMP/platform_smoke"
+          rm -rf "$work"
+          cp -R lib/tests/fixtures/platform_smoke "$work"
+          cd "$work"
+          "$GITHUB_WORKSPACE/target/release/rock" run --release -- café-ü
+
+      - name: Full test suite
+        run: cargo test --locked --workspace --release --all-features --no-fail-fast
+
+      - name: Installer tests
+        if: runner.os != 'Windows'
+        run: sh scripts/tests/install.sh
+
+      - name: Package
+        run: |
+          bash scripts/release.sh "$RELEASE_TAG"
+          bash scripts/tests/release.sh "dist/$RELEASE_TAG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ matrix.triple }}
+          path: dist/v0.7.4/*
+          if-no-files-found: error
+
+  # Installs the published bytes on a fresh machine of each OS, without LLVM
+  # or a Rust build tree, and compiles a program with them.
+  runtime:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+            # Runtime checks run in a bare image: no LLVM, no Rust.
+            container: ubuntu:24.04
+          - os: macos-latest
+            triple: aarch64-apple-darwin
+          - os: macos-15-intel
+            triple: x86_64-apple-darwin
+          - os: windows-2022
+            triple: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container || '' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install end-user prerequisites only (Linux)
+        if: runner.os == 'Linux'
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential curl ca-certificates
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-assets-*
+          merge-multiple: true
+          path: dist/v0.7.4
+      # Puts MSVC's link.exe and the CRT/SDK libraries on PATH and LIB for
+      # rockc's linker invocation.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      # Git Bash puts coreutils' link.exe (hard links) ahead of MSVC's linker,
+      # which breaks both Cargo and rockc's link step.
+      - name: Remove Git's link.exe
+        if: runner.os == 'Windows'
+        run: rm -f /usr/bin/link.exe && which link.exe
+
+      - name: Install and compile without LLVM
+        env:
+          RELEASE_TAG: v0.7.4
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            test -z "$(find /usr/lib -name 'libLLVM*.so*' -print -quit)"
+            ! command -v llvm-config
+          fi
+          bash scripts/tests/release.sh "dist/$RELEASE_TAG"
+
