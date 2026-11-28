@@ -7,8 +7,8 @@ use std::{
 
 use crate::{
     constants::{
-        ENV_FILE_NAME, ROCKC_BIN_NAME, ROCK_BIN_NAME, ROCK_LSP_BIN_NAME, SHELL_INIT_END_MARKER,
-        SHELL_INIT_START_MARKER,
+        exe_name, ENV_FILE_NAME, ROCKC_BIN_NAME, ROCK_BIN_NAME, ROCK_LSP_BIN_NAME,
+        SHELL_INIT_END_MARKER, SHELL_INIT_START_MARKER,
     },
     fsutil::make_executable,
     home::{default_rockup_home, home_dir, RockupHome},
@@ -23,7 +23,7 @@ pub(crate) fn ensure_shims(home: &RockupHome) -> Result<(), String> {
         )
     })?;
 
-    let rockup_path = home.bin_dir().join("rockup");
+    let rockup_path = home.bin_dir().join(exe_name("rockup"));
     match fs::symlink_metadata(&rockup_path) {
         Ok(metadata) if !metadata.is_file() => {
             return Err(format!(
@@ -59,18 +59,66 @@ pub(crate) fn ensure_shims(home: &RockupHome) -> Result<(), String> {
             ));
         }
     }
-    let rockup_path = dunce::canonicalize(&rockup_path)
-        .map_err(|e| format!("Failed to canonicalize installed rockup: {}", e))?;
-    write_shim(home, ROCK_BIN_NAME, &rockup_path)?;
-    write_shim(home, ROCKC_BIN_NAME, &rockup_path)?;
-    write_shim(home, ROCK_LSP_BIN_NAME, &rockup_path)?;
+    link_proxies(home, &rockup_path)
+}
+
+/// Installs `rock`, `rockc` and `rock-lsp` as hard links to (or, where links
+/// are unsupported, copies of) the installed rockup, which dispatches on its
+/// invoked name. Up-to-date proxies are left alone, so a running `rock.exe`
+/// on Windows does not block unrelated updates.
+pub(crate) fn link_proxies(home: &RockupHome, rockup_path: &Path) -> Result<(), String> {
+    let manager = fs::read(rockup_path)
+        .map_err(|e| format!("Failed to read {}: {}", rockup_path.display(), e))?;
+    for binary in [ROCK_BIN_NAME, ROCKC_BIN_NAME, ROCK_LSP_BIN_NAME] {
+        let proxy = home.bin_dir().join(exe_name(binary));
+        match fs::symlink_metadata(&proxy) {
+            Ok(metadata) if !metadata.is_file() => {
+                return Err(format!(
+                    "Refusing to replace non-regular file {}",
+                    proxy.display()
+                ));
+            }
+            Ok(_) if fs::read(&proxy).is_ok_and(|current| current == manager) => continue,
+            _ => {}
+        }
+        // Build the new proxy beside the old one, then rename it into place.
+        let staged = home.bin_dir().join(format!(".{}.new", exe_name(binary)));
+        let _ = fs::remove_file(&staged);
+        if fs::hard_link(rockup_path, &staged).is_err() {
+            fs::copy(rockup_path, &staged)
+                .map_err(|e| format!("Failed to create {}: {}", staged.display(), e))?;
+        }
+        make_executable(&staged)?;
+        if let Err(error) = fs::rename(&staged, &proxy) {
+            let _ = fs::remove_file(&staged);
+            return Err(format!("Failed to install {}: {}", proxy.display(), error));
+        }
+    }
     Ok(())
 }
 
 pub(crate) fn ensure_shell_setup(home: &RockupHome) -> Result<(), String> {
-    ensure_env_file(home)?;
-    let _ = ensure_shell_config(home)?;
-    Ok(())
+    #[cfg(windows)]
+    {
+        // Windows has no shell startup files to edit: put the bin directory
+        // on the user PATH, and record a custom home for new terminals. The
+        // POSIX env script still serves Git Bash and MSYS shells.
+        ensure_env_file(home)?;
+        crate::user_path::ensure_on_user_path(&home.bin_dir())?;
+        if home.root != default_rockup_home(&home_dir()?) {
+            crate::user_path::set_user_variable(
+                crate::constants::ROCKUP_HOME_ENV,
+                home.root.as_os_str(),
+            )?;
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        ensure_env_file(home)?;
+        let _ = ensure_shell_config(home)?;
+        Ok(())
+    }
 }
 
 fn ensure_env_file(home: &RockupHome) -> Result<PathBuf, String> {
@@ -100,11 +148,13 @@ pub(crate) fn ensure_env_file_with(home: &RockupHome, user_home: &Path) -> Resul
     Ok(env_file)
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Shell startup files are Unix-only.
 fn ensure_shell_config(home: &RockupHome) -> Result<PathBuf, String> {
     let user_home = home_dir()?;
     ensure_shell_config_with(home, &user_home, env::var("SHELL").ok().as_deref())
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Shell startup files are Unix-only.
 pub(crate) fn ensure_shell_config_with(
     home: &RockupHome,
     user_home: &Path,
@@ -140,6 +190,7 @@ pub(crate) fn ensure_shell_config_with(
     Ok(shell_config_paths[0].clone())
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Shell startup files are Unix-only.
 pub(crate) fn shell_config_path(user_home: &Path, shell_env: Option<&str>) -> PathBuf {
     match shell_env
         .and_then(|shell| Path::new(shell).file_name())
@@ -151,6 +202,7 @@ pub(crate) fn shell_config_path(user_home: &Path, shell_env: Option<&str>) -> Pa
     }
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Shell startup files are Unix-only.
 fn shell_config_paths(user_home: &Path, shell_env: Option<&str>) -> Vec<PathBuf> {
     let primary = shell_config_path(user_home, shell_env);
     let mut paths = vec![primary.clone()];
@@ -164,6 +216,7 @@ fn shell_config_paths(user_home: &Path, shell_env: Option<&str>) -> Vec<PathBuf>
     paths
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Shell startup files are Unix-only.
 fn shell_init_block(home: &RockupHome, user_home: &Path) -> String {
     let home_expr = rockup_home_expr(home, user_home);
 
@@ -206,6 +259,7 @@ fn rockup_home_expr(home: &RockupHome, user_home: &Path) -> String {
     }
 }
 
+#[cfg_attr(windows, allow(dead_code))] // Shell startup files are Unix-only.
 fn upsert_shell_init_block(existing: &str, block: &str) -> String {
     if let Some(start) = existing.find(SHELL_INIT_START_MARKER) {
         if let Some(relative_end) = existing[start..].find(SHELL_INIT_END_MARKER) {
@@ -240,21 +294,6 @@ fn upsert_shell_init_block(existing: &str, block: &str) -> String {
     format!("{}\n\n{}", trimmed, block)
 }
 
-fn write_shim(home: &RockupHome, binary: &str, rockup_path: &Path) -> Result<(), String> {
-    let shim_path = home.bin_dir().join(binary);
-    let script = format!(
-        "#!/bin/sh\nexec {} proxy {} \"$@\"\n",
-        shell_quote(rockup_path.as_os_str()),
-        shell_quote(OsString::from(binary).as_os_str()),
-    );
-
-    fs::write(&shim_path, script)
-        .map_err(|e| format!("Failed to write shim {}: {}", shim_path.display(), e))?;
-    make_executable(&shim_path)?;
-
-    Ok(())
-}
-
 pub(crate) fn toolchain_prefixed_path(toolchain_bin_dir: &Path) -> Result<OsString, String> {
     let mut paths = vec![toolchain_bin_dir.to_path_buf()];
     paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
@@ -275,7 +314,16 @@ fn shell_double_quote_escape(value: &str) -> String {
 }
 
 pub(crate) fn print_current_shell_activation_hint() -> Result<(), String> {
-    let executable = dunce::canonicalize(RockupHome::resolve()?.bin_dir().join("rockup"))
+    if cfg!(windows) {
+        let bin = RockupHome::resolve()?.bin_dir();
+        eprintln!(
+            "New terminals have {} on PATH. For this PowerShell, run: $env:Path = \"{};$env:Path\"",
+            bin.display(),
+            bin.display()
+        );
+        return Ok(());
+    }
+    let executable = dunce::canonicalize(RockupHome::resolve()?.bin_dir().join(exe_name("rockup")))
         .map_err(|e| format!("Failed to canonicalize rockup executable path: {}", e))?;
     eprintln!(
         "For this shell, run: eval \"$({} env)\"",

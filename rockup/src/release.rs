@@ -11,13 +11,19 @@ use crate::{
     fsutil::make_executable,
     home::{installed_toolchain_names, validate_name, RockupHome},
     layout::ToolchainLayout,
-    shell::{ensure_shell_setup, ensure_shims},
+    shell::{ensure_shell_setup, ensure_shims, link_proxies},
     toolchain::validate_toolchain_layout,
 };
 
 const RELEASES: &str = "https://github.com/Rock-lang-org/Rock/releases";
 const RELEASES_API: &str = "https://api.github.com/repos/Rock-lang-org/Rock/releases";
-const TARGET: &str = "x86_64-unknown-linux-gnu";
+/// Hosts with published release assets.
+const RELEASE_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+];
 
 pub(crate) struct AvailableRelease {
     pub(crate) tag: String,
@@ -38,8 +44,8 @@ struct GithubAsset {
 }
 
 pub(crate) fn available_releases() -> Result<Vec<AvailableRelease>, String> {
-    check_platform()?;
-    collect_available_releases(|page| {
+    let target = release_target()?;
+    collect_available_releases(&target, |page| {
         checked_output(curl().args([
             "--header",
             "Accept: application/vnd.github+json",
@@ -61,6 +67,7 @@ pub(crate) fn available_releases() -> Result<Vec<AvailableRelease>, String> {
 }
 
 fn collect_available_releases(
+    target: &str,
     mut fetch_page: impl FnMut(usize) -> Result<Vec<u8>, String>,
 ) -> Result<Vec<AvailableRelease>, String> {
     let mut available = Vec::new();
@@ -75,7 +82,7 @@ fn collect_available_releases(
             {
                 continue;
             }
-            let archive = format!("rock-{}-{}.tar.gz", release.tag_name, TARGET);
+            let archive = format!("rock-{}-{}.tar.gz", release.tag_name, target);
             let checksum = format!("{}.sha256", archive);
             if release.assets.iter().any(|asset| asset.name == archive)
                 && release.assets.iter().any(|asset| asset.name == checksum)
@@ -97,16 +104,19 @@ fn collect_available_releases(
 }
 
 fn check_platform() -> Result<(), String> {
-    if cfg!(all(
-        target_arch = "x86_64",
-        target_os = "linux",
-        target_env = "gnu"
-    )) {
-        Ok(())
+    release_target().map(|_| ())
+}
+
+/// This host's release target, if releases are published for it.
+fn release_target() -> Result<String, String> {
+    let host = crate::layout::host_target_triple();
+    if RELEASE_TARGETS.contains(&host.as_str()) {
+        Ok(host)
     } else {
         Err(format!(
-            "GitHub release installation only supports {}",
-            TARGET
+            "GitHub release installation supports {}, not {}",
+            RELEASE_TARGETS.join(", "),
+            host
         ))
     }
 }
@@ -190,7 +200,7 @@ fn resolve_tag(name: &str) -> Result<String, String> {
     }
     let output = checked_output(curl().args([
         "--output",
-        "/dev/null",
+        if cfg!(windows) { "NUL" } else { "/dev/null" },
         "--write-out",
         "%{url_effective}",
         &format!("{}/latest", RELEASES),
@@ -305,6 +315,20 @@ fn show_download_progress(line: &[u8], terminal: &mut impl Write) -> io::Result<
     terminal.flush()
 }
 
+fn sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::Digest;
+    let mut file =
+        fs::File::open(path).map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+    let mut hasher = sha2::Sha256::new();
+    io::copy(&mut file, &mut hasher)
+        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect())
+}
+
 fn verify_checksum(path: &Path, checksum: &Path, asset: &str) -> Result<(), String> {
     let contents =
         fs::read_to_string(checksum).map_err(|e| format!("Failed to read checksum: {}", e))?;
@@ -318,12 +342,8 @@ fn verify_checksum(path: &Path, checksum: &Path, asset: &str) -> Result<(), Stri
     {
         return Err("Invalid SHA-256 sidecar: expected one sha256sum line naming the asset".into());
     }
-    let output = checked_output(Command::new("sha256sum").arg("--").arg(path))?;
-    let actual = std::str::from_utf8(&output.stdout).map_err(|e| e.to_string())?;
-    if !actual
-        .get(..64)
-        .is_some_and(|hash| hash.eq_ignore_ascii_case(&line[..64]))
-    {
+    let actual = sha256_hex(path)?;
+    if !actual.eq_ignore_ascii_case(&line[..64]) {
         return Err(format!("SHA-256 mismatch for {}", asset));
     }
     Ok(())
@@ -339,6 +359,7 @@ impl Stage {
     fn new(parent: &Path, label: &str) -> Result<Self, String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let path = parent.join(format!(".rockup-{}", label));
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -397,76 +418,73 @@ impl Drop for Stage {
     }
 }
 
-fn tar() -> Command {
-    let mut command = Command::new("tar");
-    command.env_remove("TAR_OPTIONS").env("LC_ALL", "C");
-    command
+fn open_archive(archive: &Path) -> Result<tar::Archive<flate2::read::GzDecoder<fs::File>>, String> {
+    let file = fs::File::open(archive)
+        .map_err(|e| format!("Failed to open {}: {}", archive.display(), e))?;
+    Ok(tar::Archive::new(flate2::read::GzDecoder::new(file)))
 }
 
-fn validate_archive_listing(names: &str, types: &str) -> Result<(), String> {
-    if names.lines().count() == 0 || names.lines().count() != types.lines().count() {
-        return Err("Invalid or empty archive listing".into());
+/// The relative path of a safe archive entry. Only regular files and
+/// directories with plain ASCII names are accepted: no links, devices, FIFOs,
+/// absolute or escaping paths, control or non-ASCII characters.
+fn safe_entry_path(kind: tar::EntryType, name: &[u8]) -> Result<PathBuf, String> {
+    let shown = String::from_utf8_lossy(name);
+    let text = std::str::from_utf8(name)
+        .ok()
+        .filter(|text| {
+            !text.is_empty()
+                && !text.starts_with('/')
+                && text
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"/._-+".contains(&c))
+                && !text.split('/').any(|part| part == "..")
+        })
+        .ok_or_else(|| format!("Unsafe archive entry '{}'", shown))?;
+    if !matches!(kind, tar::EntryType::Regular | tar::EntryType::Directory) {
+        return Err(format!("Unsafe archive entry '{}'", shown));
     }
-    for (name, metadata) in names.lines().zip(types.lines()) {
-        // Reject links, devices, FIFOs and escaped/control/non-ASCII names. GNU tar
-        // lists effective names, including GNU long-name and PAX path overrides.
-        if !matches!(metadata.as_bytes().first(), Some(b'-' | b'd'))
-            || name.is_empty()
-            || name.starts_with('/')
-            || name.split('/').any(|part| part == "..")
-            || !name
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"/._-+".contains(&c))
-        {
-            return Err(format!("Unsafe archive entry '{}'", name));
-        }
-    }
-    Ok(())
+    Ok(text
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect())
 }
 
 fn extract_verified_archive(archive: &Path, destination: &Path) -> Result<(), String> {
-    let names = checked_output(
-        tar()
-            .args([
-                "--list",
-                "--gzip",
-                "--absolute-names",
-                "--quoting-style=escape",
-                "--file",
-            ])
-            .arg(archive),
-    )?;
-    let types = checked_output(
-        tar()
-            .args([
-                "--list",
-                "--verbose",
-                "--gzip",
-                "--absolute-names",
-                "--quoting-style=escape",
-                "--file",
-            ])
-            .arg(archive),
-    )?;
-    validate_archive_listing(
-        std::str::from_utf8(&names.stdout).map_err(|e| e.to_string())?,
-        std::str::from_utf8(&types.stdout).map_err(|e| e.to_string())?,
-    )?;
+    let invalid = |e: io::Error| format!("Invalid archive {}: {}", archive.display(), e);
+    // Validate every entry before writing anything.
+    let mut count = 0;
+    for entry in open_archive(archive)?.entries().map_err(invalid)? {
+        let entry = entry.map_err(invalid)?;
+        safe_entry_path(entry.header().entry_type(), &entry.path_bytes())?;
+        count += 1;
+    }
+    if count == 0 {
+        return Err("Invalid or empty archive".into());
+    }
     fs::create_dir(destination).map_err(|e| e.to_string())?;
-    checked_output(
-        tar()
-            .args([
-                "--extract",
-                "--gzip",
-                "--no-same-owner",
-                "--no-same-permissions",
-                "--delay-directory-restore",
-                "--file",
-            ])
-            .arg(archive)
-            .arg("--directory")
-            .arg(destination),
-    )?;
+    for entry in open_archive(archive)?.entries().map_err(invalid)? {
+        let mut entry = entry.map_err(invalid)?;
+        let kind = entry.header().entry_type();
+        let path = destination.join(safe_entry_path(kind, &entry.path_bytes())?);
+        if kind == tar::EntryType::Directory {
+            fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        // A duplicate entry must not overwrite an earlier file.
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| format!("Failed to create {}: {}", path.display(), e))?;
+        io::copy(&mut entry, &mut file).map_err(invalid)?;
+        if entry.header().mode().is_ok_and(|mode| mode & 0o111 != 0) {
+            drop(file);
+            make_executable(&path)?;
+        }
+    }
     sanitize_permissions(destination)?;
     Ok(())
 }
@@ -521,7 +539,7 @@ pub(crate) fn install_release(
         ));
     }
     let tag = resolve_tag(&name)?;
-    let asset = format!("rock-{}-{}.tar.gz", tag, TARGET);
+    let asset = format!("rock-{}-{}.tar.gz", tag, release_target()?);
     let archive = download_verified(&tag, &asset, &stage.path)?;
     install_archive(home, &name, &archive, &tag, &mut stage)?;
     Ok(destination)
@@ -574,15 +592,44 @@ pub(crate) fn self_update() -> Result<(), String> {
         .ok_or("Executable has no parent directory")?;
     let stage = Stage::new(parent, "self-update")?;
     let tag = resolve_tag("stable")?;
-    let asset = format!("rockup-{}", TARGET);
+    let target = release_target()?;
+    let asset = format!("rockup-{}{}", target, std::env::consts::EXE_SUFFIX);
     let downloaded = download_verified(&tag, &asset, &stage.path)?;
     make_executable(&downloaded)?;
-    // Rename over the running executable, never truncate it. Existing shims keep
-    // pointing at this path, and ensure_shims must not run from the staged binary.
-    fs::rename(&downloaded, &executable)
-        .map_err(|e| format!("Failed to replace {}: {}", executable.display(), e))?;
+    replace_running_executable(&downloaded, &executable)?;
+    // Proxies are hard links or copies of the manager: point them at the new
+    // file. This only links files; it never runs the downloaded binary.
+    if let Ok(home) = RockupHome::resolve() {
+        let installed = home.bin_dir().join(crate::constants::exe_name("rockup"));
+        if dunce::canonicalize(&installed).is_ok_and(|installed| installed == executable) {
+            link_proxies(&home, &executable)?;
+        }
+    }
     println!("Updated rockup to {} at {}", tag, executable.display());
     Ok(())
+}
+
+/// Puts `new` at `executable`, which is running. Unix renames over it; the
+/// running process keeps the old file. Windows cannot replace a running
+/// executable but can rename it, so the old one moves aside first.
+fn replace_running_executable(new: &Path, executable: &Path) -> Result<(), String> {
+    let replace =
+        |error: std::io::Error| format!("Failed to replace {}: {}", executable.display(), error);
+    if cfg!(windows) {
+        // Not in the stage: the running image cannot be deleted until it
+        // exits, so the next update removes it instead.
+        let previous = executable.with_file_name(".rockup-previous.exe");
+        let _ = fs::remove_file(&previous);
+        fs::rename(executable, &previous).map_err(replace)?;
+        if let Err(error) = fs::rename(new, executable) {
+            let _ = fs::rename(&previous, executable);
+            return Err(replace(error));
+        }
+        Ok(())
+    } else {
+        // Rename over the running executable, never truncate it.
+        fs::rename(new, executable).map_err(replace)
+    }
 }
 
 #[cfg(test)]

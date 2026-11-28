@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::constants::{
-    BIN_DIR, COMPONENTS_MANIFEST_NAME, LIB_DIR, ROCKC_BIN_NAME, ROCK_BIN_NAME, ROCK_LSP_BIN_NAME,
-    STD_ARTIFACT_NAME, STD_OBJECT_NAME, TOOLCHAIN_MANIFEST_NAME,
+    exe_name, BIN_DIR, COMPONENTS_MANIFEST_NAME, LIB_DIR, ROCKC_BIN_NAME, ROCK_BIN_NAME,
+    ROCK_LSP_BIN_NAME, STD_ARTIFACT_NAME, STD_OBJECT_NAME, TOOLCHAIN_MANIFEST_NAME,
 };
 
 pub(crate) use rock_shared::sysroot::host_target_triple;
@@ -35,9 +35,9 @@ impl ToolchainLayout {
             sysroot: root,
             target_triple,
             target_component_dir: target_libdir.clone(),
-            rock_bin: bin_dir.join(ROCK_BIN_NAME),
-            rockc_bin: bin_dir.join(ROCKC_BIN_NAME),
-            rock_lsp_bin: bin_dir.join(ROCK_LSP_BIN_NAME),
+            rock_bin: bin_dir.join(exe_name(ROCK_BIN_NAME)),
+            rockc_bin: bin_dir.join(exe_name(ROCKC_BIN_NAME)),
+            rock_lsp_bin: bin_dir.join(exe_name(ROCK_LSP_BIN_NAME)),
             std_artifact: target_libdir.join(STD_ARTIFACT_NAME),
             std_object: target_libdir.join(STD_OBJECT_NAME),
             manifest_path: target_libdir.join(TOOLCHAIN_MANIFEST_NAME),
@@ -61,9 +61,9 @@ pub(crate) fn cargo_build_dir_layout(root: PathBuf) -> CargoBuildDirLayout {
         .join(host_target_triple());
 
     CargoBuildDirLayout {
-        rock_bin: root.join(ROCK_BIN_NAME),
-        rockc_bin: root.join(ROCKC_BIN_NAME),
-        rock_lsp_bin: root.join(ROCK_LSP_BIN_NAME),
+        rock_bin: root.join(exe_name(ROCK_BIN_NAME)),
+        rockc_bin: root.join(exe_name(ROCKC_BIN_NAME)),
+        rock_lsp_bin: root.join(exe_name(ROCK_LSP_BIN_NAME)),
         target_libdir,
     }
 }

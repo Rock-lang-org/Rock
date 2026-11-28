@@ -1,5 +1,7 @@
 use std::{
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
@@ -184,7 +186,7 @@ pub(crate) fn run_toolchain_command(
 pub(crate) fn proxy_toolchain_command(
     home: &RockupHome,
     binary: &str,
-    args: &[String],
+    args: &[OsString],
 ) -> Result<ExitStatus, String> {
     let current_dir = env::current_dir().map_err(|e| {
         format!(
@@ -198,7 +200,7 @@ pub(crate) fn proxy_toolchain_command(
 pub(crate) fn proxy_toolchain_command_from_dir(
     home: &RockupHome,
     binary: &str,
-    args: &[String],
+    args: &[OsString],
     current_dir: &Path,
 ) -> Result<ExitStatus, String> {
     let toolchain = resolve_active_toolchain(home, current_env_toolchain(), Some(current_dir))?;

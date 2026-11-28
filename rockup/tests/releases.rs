@@ -166,6 +166,18 @@ impl Drop for Fixture {
     }
 }
 
+fn assert_same_file(path: &Path, expected: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let (path_meta, expected_meta) = (fs::metadata(path).unwrap(), fs::metadata(expected).unwrap());
+    assert_eq!(
+        (path_meta.dev(), path_meta.ino()),
+        (expected_meta.dev(), expected_meta.ino()),
+        "{} must be a hard link to {}",
+        path.display(),
+        expected.display()
+    );
+}
+
 fn script(path: &Path, body: &str) {
     fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
@@ -213,9 +225,9 @@ fn self_install_persists_only_manager_then_install_fetches_toolchain() {
     assert!(String::from_utf8_lossy(&list.stdout)
         .starts_with("Installed toolchains (* active):\n  (none)\n"));
     success(list);
+    // Proxies are hard links to the persisted manager.
     for binary in ["rock", "rockc", "rock-lsp"] {
-        let shim = fs::read_to_string(fixture.root.join("home/bin").join(binary)).unwrap();
-        assert!(shim.contains(manager.to_str().unwrap()));
+        assert_same_file(&fixture.root.join("home/bin").join(binary), &manager);
     }
     assert!(fixture.root.join("home/env").is_file());
     assert!(fixture.root.join("user/.profile").is_file());
@@ -491,8 +503,7 @@ fn self_update_is_atomic_and_keeps_shim_destination() {
     );
     fs::remove_file(&executable).unwrap();
     let executable = fixture.root.join("home/bin/rockup");
-    let shim = fs::read_to_string(fixture.root.join("home/bin/rock")).unwrap();
-    assert!(shim.contains(executable.to_str().unwrap()));
+    assert_same_file(&fixture.root.join("home/bin/rock"), &executable);
     success(
         fixture
             .command_for(&fixture.root.join("home/bin/rock"))
@@ -527,10 +538,10 @@ fn self_update_is_atomic_and_keeps_shim_destination() {
         "updated-rockup"
     );
     success(output);
-    assert_eq!(
-        fs::read_to_string(fixture.root.join("home/bin/rock")).unwrap(),
-        shim
-    );
+    // Proxies are relinked to the new manager, never left on the old file.
+    for binary in ["rock", "rockc", "rock-lsp"] {
+        assert_same_file(&fixture.root.join("home/bin").join(binary), &executable);
+    }
     assert!(!fixture.root.join("home/bin/.rockup-self-update").exists());
 }
 

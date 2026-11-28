@@ -10,5 +10,11 @@ dunce = "1.0"
 clap.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
+flate2 = "1.0"
 toml.workspace = true
 rock-shared = { path = "../rock-shared", features = ["manifest", "sysroot", "process"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }

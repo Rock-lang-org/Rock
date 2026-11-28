@@ -206,10 +206,11 @@ pub(crate) enum CommandConfig {
         command: Vec<String>,
     },
     #[command(hide = true, disable_help_flag = true)]
+    /// Kept for `sh` shims written by older rockup releases.
     Proxy {
         binary: String,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+        args: Vec<std::ffi::OsString>,
     },
 }
 

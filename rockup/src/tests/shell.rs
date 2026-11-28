@@ -1,32 +1,51 @@
 use std::fs;
 
 use crate::{
-    constants::ENV_FILE_NAME,
+    constants::{exe_name, ENV_FILE_NAME},
     home::default_rockup_home,
     shell::{ensure_env_file_with, ensure_shell_config_with, ensure_shims, shell_config_path},
 };
 
 use super::support::{fake_home, temp_test_dir};
 
-// Shims are POSIX shell scripts that quote the manager path.
-#[cfg(unix)]
 #[test]
-fn test_ensure_shims_persists_manager_and_preserves_existing_binary() {
+fn test_ensure_shims_persists_manager_and_links_proxies() {
     let temp_dir = temp_test_dir("persistent_manager");
     let home = fake_home(temp_dir.join("custom home"));
+    fs::create_dir_all(home.bin_dir()).unwrap();
+    // A proxy left by an older rockup, a POSIX `sh` shim, is replaced.
+    fs::write(
+        home.bin_dir().join(exe_name("rock")),
+        "#!/bin/sh\nexec old\n",
+    )
+    .unwrap();
     ensure_shims(&home).unwrap();
-    let installed = home.bin_dir().join("rockup");
-    assert_eq!(
-        fs::read(&installed).unwrap(),
-        fs::read(std::env::current_exe().unwrap()).unwrap()
-    );
+    let installed = home.bin_dir().join(exe_name("rockup"));
+    let manager = fs::read(std::env::current_exe().unwrap()).unwrap();
+    assert_eq!(fs::read(&installed).unwrap(), manager);
     for binary in ["rock", "rockc", "rock-lsp"] {
-        let shim = fs::read_to_string(home.bin_dir().join(binary)).unwrap();
-        assert!(shim.contains(dunce::canonicalize(&installed).unwrap().to_str().unwrap()));
+        // A hard link to, or copy of, the manager, which dispatches on argv[0].
+        assert_eq!(
+            fs::read(home.bin_dir().join(exe_name(binary))).unwrap(),
+            manager
+        );
     }
+    assert!(!home
+        .bin_dir()
+        .join(format!(".{}.new", exe_name("rock")))
+        .exists());
+    // An existing manager is replaced only by `rockup self update`.
+    fs::remove_file(&installed).unwrap();
     fs::write(&installed, b"existing manager").unwrap();
     ensure_shims(&home).unwrap();
     assert_eq!(fs::read(&installed).unwrap(), b"existing manager");
+    // Proxies follow the manager.
+    for binary in ["rock", "rockc", "rock-lsp"] {
+        assert_eq!(
+            fs::read(home.bin_dir().join(exe_name(binary))).unwrap(),
+            b"existing manager"
+        );
+    }
     fs::remove_dir_all(temp_dir).unwrap();
 }
 

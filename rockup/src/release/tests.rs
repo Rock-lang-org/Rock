@@ -1,5 +1,7 @@
 use super::*;
 
+const TARGET: &str = "x86_64-unknown-linux-gnu";
+
 fn github_release(tag: &str) -> serde_json::Value {
     let archive = format!("rock-{}-{}.tar.gz", tag, TARGET);
     serde_json::json!({
@@ -37,7 +39,7 @@ fn available_versions_require_installable_tags_and_both_assets() {
         stable,
     ])
     .unwrap();
-    let available = collect_available_releases(|page| {
+    let available = collect_available_releases(TARGET, |page| {
         assert_eq!(page, 1);
         Ok(body.clone())
     })
@@ -54,7 +56,7 @@ fn available_versions_paginate_before_filtering() {
     let mut draft = github_release("v2.0.0");
     draft["draft"] = true.into();
     let mut pages = Vec::new();
-    let available = collect_available_releases(|page| {
+    let available = collect_available_releases(TARGET, |page| {
         pages.push(page);
         Ok(serde_json::to_vec(&match page {
             1 => vec![draft.clone(); 100],
@@ -71,14 +73,14 @@ fn available_versions_paginate_before_filtering() {
 
 #[test]
 fn available_versions_handle_empty_invalid_and_failed_responses() {
-    assert!(collect_available_releases(|_| Ok(b"[]".to_vec()))
+    assert!(collect_available_releases(TARGET, |_| Ok(b"[]".to_vec()))
         .unwrap()
         .is_empty());
     for body in ["not json", "{}", "[{\"tag_name\":\"v1.0.0\"}]"] {
-        assert!(collect_available_releases(|_| Ok(body.as_bytes().to_vec())).is_err());
+        assert!(collect_available_releases(TARGET, |_| Ok(body.as_bytes().to_vec())).is_err());
     }
     assert!(matches!(
-        collect_available_releases(|_| Err("offline".into())),
+        collect_available_releases(TARGET, |_| Err("offline".into())),
         Err(error) if error == "offline"
     ));
 }
@@ -184,25 +186,141 @@ fn release_names_and_latest_redirect() {
 }
 
 #[test]
-fn archive_listing_rejects_traversal_links_and_escaped_names() {
-    assert!(validate_archive_listing("./\n./bin/rock\n", "drwx metadata\n-rwx metadata\n").is_ok());
+fn archive_entries_reject_traversal_links_and_escaped_names() {
+    use tar::EntryType;
+    assert_eq!(
+        safe_entry_path(EntryType::Regular, b"./bin/rock").unwrap(),
+        PathBuf::from("bin").join("rock")
+    );
+    assert!(safe_entry_path(EntryType::Directory, b"./").is_ok());
     for name in [
-        "/bin/rock",
-        "../rock",
-        "bin/../../rock",
-        "bin/evil\\nname",
-        "bin/a b",
-        "bin/\u{e9}",
+        &b"/bin/rock"[..],
+        b"../rock",
+        b"bin/../../rock",
+        b"bin/evil\nname",
+        b"bin/a b",
+        "bin/\u{e9}".as_bytes(),
+        b"bin/\xff",
+        b"",
     ] {
         assert!(
-            validate_archive_listing(name, "-rwx metadata").is_err(),
-            "{name}"
+            safe_entry_path(EntryType::Regular, name).is_err(),
+            "{}",
+            String::from_utf8_lossy(name)
         );
     }
-    for kind in ['l', 'h', 'b', 'c', 'p', 's'] {
-        assert!(validate_archive_listing("bin/rock", &format!("{kind} metadata")).is_err());
+    for kind in [
+        EntryType::Symlink,
+        EntryType::Link,
+        EntryType::Block,
+        EntryType::Char,
+        EntryType::Fifo,
+    ] {
+        assert!(safe_entry_path(kind, b"bin/rock").is_err());
     }
-    assert!(validate_archive_listing("", "").is_err());
+}
+
+fn write_archive(path: &Path, entries: &[(&str, tar::EntryType, &[u8], u32)]) {
+    let file = fs::File::create(path).unwrap();
+    let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
+    let mut builder = tar::Builder::new(encoder);
+    for (name, kind, data, mode) in entries {
+        let mut header = tar::Header::new_ustar();
+        header.set_entry_type(*kind);
+        header.set_mode(*mode);
+        header.set_size(data.len() as u64);
+        if *kind == tar::EntryType::Symlink {
+            header.set_link_name("../outside").unwrap();
+        }
+        // Raw names: set_path would refuse the unsafe ones under test.
+        header.as_old_mut().name[..name.len()].copy_from_slice(name.as_bytes());
+        header.set_cksum();
+        builder.append(&header, *data).unwrap();
+    }
+    builder.into_inner().unwrap().finish().unwrap();
+}
+
+#[test]
+fn archives_extract_regular_files_and_reject_unsafe_entries_before_writing() {
+    let root = canonical_temp_dir().join(format!("rockup-extract-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let good = root.join("good.tar.gz");
+    write_archive(
+        &good,
+        &[
+            ("bin/", tar::EntryType::Directory, b"", 0o755),
+            ("bin/rock", tar::EntryType::Regular, b"binary", 0o755),
+            ("lib/notes.txt", tar::EntryType::Regular, b"text", 0o644),
+        ],
+    );
+    let out = root.join("good");
+    extract_verified_archive(&good, &out).unwrap();
+    assert_eq!(fs::read(out.join("bin/rock")).unwrap(), b"binary");
+    assert_eq!(fs::read(out.join("lib/notes.txt")).unwrap(), b"text");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &str| fs::metadata(out.join(path)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode("bin/rock"), 0o755);
+        assert_eq!(mode("lib/notes.txt"), 0o644);
+    }
+
+    for (label, entries) in [
+        (
+            "link",
+            vec![
+                ("bin/rock", tar::EntryType::Regular, &b"binary"[..], 0o755),
+                ("bin/escape", tar::EntryType::Symlink, &b""[..], 0o777),
+            ],
+        ),
+        (
+            "traversal",
+            vec![
+                ("bin/rock", tar::EntryType::Regular, &b"binary"[..], 0o755),
+                ("../escape", tar::EntryType::Regular, &b"x"[..], 0o644),
+            ],
+        ),
+        (
+            "duplicate",
+            vec![
+                ("bin/rock", tar::EntryType::Regular, &b"one"[..], 0o755),
+                ("bin/rock", tar::EntryType::Regular, &b"two"[..], 0o755),
+            ],
+        ),
+    ] {
+        let archive = root.join(format!("{label}.tar.gz"));
+        write_archive(&archive, &entries);
+        let out = root.join(label);
+        assert!(extract_verified_archive(&archive, &out).is_err(), "{label}");
+        if label != "duplicate" {
+            // Rejected during validation: nothing was written.
+            assert!(!out.exists(), "{label}");
+        }
+    }
+    assert!(!root.join("escape").exists());
+
+    let empty = root.join("empty.tar.gz");
+    write_archive(&empty, &[]);
+    assert!(extract_verified_archive(&empty, &root.join("empty")).is_err());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn checksums_are_computed_in_process() {
+    let root = canonical_temp_dir().join(format!("rockup-checksum-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let asset = root.join("asset");
+    fs::write(&asset, b"abc").unwrap();
+    let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    assert_eq!(sha256_hex(&asset).unwrap(), expected);
+    let sidecar = root.join("asset.sha256");
+    fs::write(&sidecar, format!("{expected}  asset\n")).unwrap();
+    verify_checksum(&asset, &sidecar, "asset").unwrap();
+    fs::write(&sidecar, format!("{}  asset\n", "0".repeat(64))).unwrap();
+    assert!(verify_checksum(&asset, &sidecar, "asset").is_err());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
