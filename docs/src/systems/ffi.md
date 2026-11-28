@@ -21,9 +21,10 @@ The target C library must export `sqrt` with the declared calling convention.
 boundary. The program owns no memory passed to `sqrt`, so there is no cleanup
 operation associated with this call.
 
-Build this kind of example with `rock` only on the documented target,
-`x86_64-unknown-linux-gnu`. A different target may use a different library
-name, ABI, or linker setup.
+`sqrt` comes from the C math library on every supported target. Other C
+functions may differ by target in library name, ABI, or linker setup: isolate
+such declarations in `cfg` blocks, as the standard library's `std::sys`
+backends do.
 
 ## Foreign names that are not Rock names
 

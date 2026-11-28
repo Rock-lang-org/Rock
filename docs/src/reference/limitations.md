@@ -5,15 +5,17 @@ programmer can encounter today, not promises about a final language design.
 
 ## Platform and distribution
 
-The supported code-generation target is currently
-`x86_64-unknown-linux-gnu`. Binary releases target Ubuntu 24.04 (glibc 2.39
-or newer) and statically link LLVM 18; end users do not need to install LLVM.
-They are not fully static executables: system libraries and a C linker remain
-required. On Ubuntu 24.04, install `build-essential`, `curl`, and
-`ca-certificates`; GNU tar, gzip, and `sha256sum` must also be available.
-The FFI-backed standard library is POSIX- and Linux-oriented. Rockup supports
-binary releases starting with `v0.5.0`; there is no public package registry
-workflow.
+Rock targets `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
+`x86_64-apple-darwin` and `x86_64-pc-windows-msvc`, and publishes binary
+releases for each. The Linux release targets Ubuntu 24.04 (glibc 2.39 or
+newer). Releases statically link LLVM 18; end users do not need to install
+LLVM. They are not fully static executables: system libraries and a C linker
+remain required (`cc` on Linux and macOS, MSVC `link.exe` on Windows). See
+[Installation](../getting-started/installation.md) for each platform's
+prerequisites. The standard library selects a per-OS backend: POSIX on Linux
+and macOS, the Microsoft C runtime, Winsock and Win32 on Windows. Rockup
+supports binary releases starting with `v0.5.0` on Linux; there is no public
+package registry workflow.
 
 To prepare a development toolchain from a checkout, use the
 [source installation prerequisites](../getting-started/installation.md#build-from-source).

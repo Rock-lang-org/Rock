@@ -142,8 +142,9 @@ structured error before entering unsafe code.
 
 ## Current target caveat
 
-The current FFI-backed implementations assume POSIX behavior and the
-`x86_64-unknown-linux-gnu` target. Raw pointer widths, C integer conventions,
-linker libraries, and synchronization ABIs can differ elsewhere. Keep
+Raw pointer widths, C integer conventions, linker libraries, and
+synchronization ABIs differ between the supported targets (Linux, macOS and
+Windows). The standard library keeps its OS bindings in per-target `std::sys`
+backends. Keep
 target-specific declarations isolated and compile each unsafe boundary on the
 target where it will run.

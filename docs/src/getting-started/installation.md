@@ -1,28 +1,45 @@
 # Installation
 
-Rock's release toolchain supports only Linux x86_64 with GNU glibc (`x86_64-unknown-linux-gnu`). The binary baseline is Ubuntu 24.04, requiring glibc 2.39 or newer and a C linker available as `cc`. LLVM 18 is statically linked, so end users do not need to install LLVM. The executables are not fully static: system-library dependencies remain.
+Rock publishes release toolchains for these hosts:
 
-> **Release format:** rockup requires `v0.5.0` or later. Historical releases use a different asset layout and cannot be installed through this bootstrap.
+| Host | Target | Linker Rock programs need |
+| --- | --- | --- |
+| Linux x86_64, GNU glibc 2.39+ (Ubuntu 24.04 baseline) | `x86_64-unknown-linux-gnu` | `cc` |
+| macOS on Apple silicon | `aarch64-apple-darwin` | `cc` from the Xcode Command Line Tools |
+| macOS on Intel | `x86_64-apple-darwin` | `cc` from the Xcode Command Line Tools |
+| Windows 10 1803+ x64 | `x86_64-pc-windows-msvc` | MSVC `link.exe` from Visual Studio Build Tools |
+
+LLVM 18 is statically linked, so end users do not need to install LLVM. The executables are not fully static: they use the system C library (glibc, libSystem, or the Microsoft C runtime and Visual C++ runtime that the Build Tools install).
+
+> **Release format:** rockup requires `v0.5.0` or later on Linux. macOS and Windows assets exist only from the first release that publishes them; earlier releases are Linux-only.
 
 ## Prerequisites
 
-For binary installation on Ubuntu 24.04, install the runtime requirements yourself:
+Install the linker for your platform yourself; the installer never invokes `sudo` or installs operating-system packages. Neither Rust nor LLVM is required to use a binary release.
 
-```console
-$ sudo apt install build-essential curl ca-certificates
-```
+- **Ubuntu 24.04:** `sudo apt install build-essential curl ca-certificates`.
+- **macOS:** `xcode-select --install` for the Command Line Tools. `curl` and `shasum` ship with macOS.
+- **Windows:** install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the "Desktop development with C++" workload, and run Rock from a "Developer PowerShell" or "x64 Native Tools" prompt so `link.exe` and its libraries are found. `curl.exe` ships with Windows 10 1803 and later.
 
-GNU tar, gzip, and `sha256sum` must also be installed (normally already present on Ubuntu). Rockup uses curl for HTTPS downloads and those tools to verify and unpack archives. The installer never invokes `sudo` or installs operating-system packages. Neither Rust nor LLVM is required to use a binary release.
+Rockup downloads with `curl` and verifies and unpacks archives itself, so it needs no system `tar` or `sha256sum`. The bootstrap scripts verify the manager with `sha256sum` or `shasum` (macOS and Linux) or PowerShell's `Get-FileHash` (Windows).
 
 ## Install a release
 
 Install the manager and complete Rock toolchain with this one-liner. It executes a script from the official `Rock-lang-org/Rock` release publisher; only run it if you trust that publisher. You can inspect [`install.sh`](https://github.com/Rock-lang-org/Rock/releases/latest/download/install.sh) separately first.
 
+On Linux and macOS:
+
 ```sh
 curl --proto '=https' -fsSL https://github.com/Rock-lang-org/Rock/releases/latest/download/install.sh | sh
 ```
 
-The bootstrap downloads the standalone `rockup-x86_64-unknown-linux-gnu` and its exact `.sha256` sidecar over HTTPS, checks that the sidecar names that asset and that its checksum matches, then executes `rockup self install`. This copies the manager and command shims and adds shell setup. The script then invokes the installed manager's `rockup install stable` automatically to download and install the compiler, project command, language server, and standard library. No shell restart or separate command is needed between these steps.
+On Windows, in PowerShell ([`install.ps1`](https://github.com/Rock-lang-org/Rock/releases/latest/download/install.ps1)):
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/Rock-lang-org/Rock/releases/latest/download/install.ps1)))
+```
+
+The bootstrap downloads the standalone manager for your host (`rockup-TARGET`, or `rockup-x86_64-pc-windows-msvc.exe` on Windows) and its exact `.sha256` sidecar over HTTPS, checks that the sidecar names that asset and that its checksum matches, then executes `rockup self install`. This copies the manager, installs the `rock`, `rockc` and `rock-lsp` commands, and adds shell setup. The script then invokes the installed manager's `rockup install stable` automatically to download and install the compiler, project command, language server, and standard library. No shell restart or separate command is needed between these steps.
 
 Rockup verifies the toolchain archive before unpacking it. Checksums detect corruption; they are not independent signatures, so you still trust the official release publisher and HTTPS.
 
@@ -32,17 +49,17 @@ The bootstrap defaults to `stable`, meaning GitHub's latest published non-prerel
 $ curl --proto '=https' -fsSL https://github.com/Rock-lang-org/Rock/releases/latest/download/install.sh | sh -s -- v0.6.0
 ```
 
-That command installs both rockup and the `v0.6.0` toolchain. From a checkout, `sh scripts/install.sh v0.6.0` does the same. Stable manager assets come from `releases/latest/download`; pinned manager assets come from `releases/download/vVERSION`.
+That command installs both rockup and the `v0.6.0` toolchain. On Windows, pass the tag after the script block: `& ([scriptblock]::Create((irm .../install.ps1))) v0.6.0`. From a checkout, `sh scripts/install.sh v0.6.0` or `powershell -File scripts/install.ps1 v0.6.0` does the same. Stable manager assets come from `releases/latest/download`; pinned manager assets come from `releases/download/vVERSION`.
 
 ### Home and shell setup
 
-The bootstrap persists rockup as `~/.rockup/bin/rockup`, creates `rock`, `rockc`, and `rock-lsp` shims in `~/.rockup/bin`, and installs the selected toolchain under `~/.rockup/toolchains`. Set `ROCKUP_HOME` to a nonempty absolute path before installation to use another location; keep using that value in later shells.
+The bootstrap persists rockup as `~/.rockup/bin/rockup` (`%USERPROFILE%\.rockup\bin\rockup.exe` on Windows) and installs the selected toolchain under `~/.rockup/toolchains`. Like rustup's proxies, `rock`, `rockc`, and `rock-lsp` in `~/.rockup/bin` are hard links to (or, where links are unavailable, copies of) the rockup executable itself: started under one of those names, rockup runs that command from the selected toolchain. `rockup self update` relinks them. Set `ROCKUP_HOME` to a nonempty absolute path before installation to use another location; keep using that value in later shells (on Windows, rockup records a custom `ROCKUP_HOME` in your user environment).
 
 An installed toolchain uses the standard library beside its own binaries, even when you run it inside a compiler checkout with a `target/` directory. `CARGO_TARGET_DIR` affects development sysroot discovery, not installed toolchains. `ROCK_SYSROOT` remains an explicit override; leave it unset for normal rockup-managed use.
 
 The bootstrap refuses to overwrite an existing `ROCKUP_HOME/bin/rockup`, including a dangling symlink. Use that installed manager's `install`, `update`, or `self update` command instead of rerunning the bootstrap. If toolchain installation fails after the manager is installed, the script exits with an error and prints the exact command to retry; the manager remains installed. Installing a release does not delete an installed local `dev` toolchain or replace an existing default; the first toolchain in an empty home becomes the default.
 
-Rockup writes an `env` file and a managed activation block to `.bashrc` for Bash, `.zshrc` for Zsh, or `.profile` for other shells, based on `SHELL`. It also updates existing Bash and Zsh configuration files. Restart your shell, or activate a POSIX-compatible shell immediately:
+On Linux and macOS, rockup writes an `env` file and a managed activation block to `.bashrc` for Bash, `.zshrc` for Zsh, or `.profile` for other shells, based on `SHELL`. It also updates existing Bash and Zsh configuration files. On Windows, rockup instead adds `~/.rockup/bin` to your user `PATH` (`HKCU\Environment`, keeping existing `%VAR%` references), so new terminals find the commands; open a new terminal after installing. Set `ROCKUP_NO_MODIFY_PATH=1` to skip both the startup-file and user `PATH` changes; the `env` file is still written. Restart your shell, or activate a POSIX-compatible shell immediately:
 
 ```sh
 . "${ROCKUP_HOME:-$HOME/.rockup}/env"
@@ -55,7 +72,7 @@ rock --version
 rock-lsp --help
 ```
 
-The generated activation script uses POSIX shell syntax; it is not native Fish or PowerShell setup. `rock-lsp` without arguments starts an LSP server over standard input/output, not an interactive prompt.
+The generated activation script uses POSIX shell syntax, which also serves Git Bash on Windows; it is not native Fish or PowerShell setup. `rock-lsp` without arguments starts an LSP server over standard input/output, not an interactive prompt.
 
 ## Manage releases and pins
 
@@ -110,7 +127,7 @@ $ rockup remove v0.6.0
 
 `rockup list` shows installed toolchains, marks the active selection with `*`, and queries GitHub for versions available to install. The available section includes only releases with a toolchain archive and checksum for the supported platform; prereleases are labeled. Install a listed tag with `rockup install v0.6.0`, for example, or use `rockup install stable` for the latest stable release. If GitHub cannot be reached or its API rate limit is exceeded, the command still shows installed toolchains and reports that available versions could not be retrieved.
 
-Rockup is not a full Rustup replacement. Release downloads do not support Windows, macOS, musl, other CPU architectures, a nightly channel, or automatic cross-target installation. The local `target add --path` component workflow does not imply downloadable cross-target releases.
+Rockup is not a full Rustup replacement. Release downloads do not support musl, Linux or Windows on ARM, other CPU architectures, a nightly channel, or automatic cross-target installation. The local `target add --path` component workflow does not imply downloadable cross-target releases.
 
 ## Build from source
 
@@ -187,6 +204,8 @@ $ cargo test -p rock-lib
 
 - HTTP 404 for bootstrap assets means the selected release does not provide the required assets; select `v0.5.0` or later, or use the source workflow.
 - A checksum mismatch or malformed sidecar stops installation before the downloaded manager executes. Do not bypass verification; retry or report the release asset problem.
+- On Windows, `link.exe` or `LNK1104: cannot open file 'libcmt.lib'` errors mean the MSVC environment is missing: run Rock from a Developer PowerShell or x64 Native Tools prompt. In Git Bash, make sure Git's own `/usr/bin/link.exe` does not shadow MSVC's.
+- On macOS, `xcrun: error: invalid active developer path` means the Command Line Tools are missing: run `xcode-select --install`.
 - `GLIBC_2.39` errors mean the host is older than the release baseline. Use Ubuntu 24.04 or a compatible newer GNU system, or build from source on your host.
 - Source-build `llvm-config` or missing static-archive errors mean you should check the LLVM 18 development packages above and `LLVM_SYS_180_PREFIX=/usr/lib/llvm-18`; do not switch to dynamic linking. Binary releases do not require an LLVM installation.
 - A missing standard-library component means the packaging step did not complete or the installed toolchain does not match the checkout.

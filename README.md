@@ -39,29 +39,33 @@ Recent development adds array-length const generics, imported enum constructors,
 
 `rockup` is Rock's rustup-style toolchain manager. It installs the matching compiler, project command, language server, and standard library together. You use `rock` for projects and `rockup` to manage installed versions.
 
-The initial release target is **x86_64 Linux GNU**, with **Ubuntu 24.04 / glibc 2.39** as its baseline. A C linker and standard system libraries are still required.
+Releases are published for **x86_64 Linux GNU** (Ubuntu 24.04 / glibc 2.39 baseline), **macOS** on Apple silicon and Intel, and **Windows x64**. A C linker and standard system libraries are still required.
 
 ### Install the Toolchain
 
-On Ubuntu 24.04, install the small set of system prerequisites:
+Install the linker first; the installer does not run `sudo` or install system packages for you:
 
-```sh
-sudo apt install build-essential curl ca-certificates
-```
+- Ubuntu 24.04: `sudo apt install build-essential curl ca-certificates`
+- macOS: `xcode-select --install`
+- Windows: [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++"; run Rock from a Developer PowerShell
 
-GNU tar, gzip, and `sha256sum` must also be available; they are normally already installed on Ubuntu. The installer does not run `sudo` or install system packages for you.
-
-Install Rock in one step:
+Install Rock in one step on Linux or macOS:
 
 ```sh
 curl --proto '=https' -fsSL https://github.com/Rock-lang-org/Rock/releases/latest/download/install.sh | sh
 ```
 
-The bootstrap downloads and verifies the standalone rockup manager, then runs `rockup self install` to copy it and command shims into `~/.rockup/bin` and add shell setup. It then runs the installed manager's `rockup install stable` automatically to install the compiler, project command, language server, and standard library. No separate install command is needed.
+or on Windows, in PowerShell:
+
+```powershell
+& ([scriptblock]::Create((irm https://github.com/Rock-lang-org/Rock/releases/latest/download/install.ps1)))
+```
+
+The bootstrap downloads and verifies the standalone rockup manager, then runs `rockup self install` to copy it into `~/.rockup/bin`, install `rock`, `rockc` and `rock-lsp` there as links to it, and add shell setup (the user `PATH` on Windows). It then runs the installed manager's `rockup install stable` automatically to install the compiler, project command, language server, and standard library. No separate install command is needed.
 
 Rockup verifies the toolchain archive before unpacking it. Checksums detect corrupted downloads; they are not independent signatures of the release publisher. An optional `vVERSION` argument to the bootstrap pins both the manager and the toolchain.
 
-Restart your shell, or activate a POSIX-compatible shell with `. "${ROCKUP_HOME:-$HOME/.rockup}/env"`, then check:
+Restart your shell (open a new terminal on Windows), or activate a POSIX-compatible shell with `. "${ROCKUP_HOME:-$HOME/.rockup}/env"`, then check:
 
 ```sh
 rock --version
